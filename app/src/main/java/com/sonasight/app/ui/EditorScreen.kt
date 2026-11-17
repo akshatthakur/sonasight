@@ -95,7 +95,9 @@ import java.io.File
 import java.util.UUID
 import kotlin.math.roundToInt
 
-private enum class Tab(val label: String) { FILM("FILM"), TUNE("TUNE"), CROP("CROP"), TRIM("TRIM") }
+private enum class Tab(val label: String, val jp: String) {
+    FILM("FILM", "フィルム"), TUNE("TUNE", "調整"), CROP("CROP", "切抜"), TRIM("TRIM", "尺"),
+}
 
 /** Frame shapes in the editor. null keeps the original. */
 private val CROPS: List<Aspect?> = listOf(null) + Aspect.entries
@@ -123,6 +125,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
     var progress by remember { mutableIntStateOf(0) }
     var notice by remember { mutableStateOf<String?>(null) }
     var naming by remember { mutableStateOf(false) }
+    var stampKey by remember { mutableIntStateOf(0) }
     var recipeName by remember { mutableStateOf("") }
 
     // photo state
@@ -238,6 +241,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                     }.getOrNull()
                 }
                 saving = false
+                if (uriOut != null) stampKey += 1
                 say(if (uriOut != null) "SAVED TO PICTURES / SONASIGHT" else "COULDN'T SAVE")
             }
         } else {
@@ -246,7 +250,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                 endMs = if (endMs > 0) endMs else durationMs,
                 crop = if (crop != null) cropRect() else null,
                 onProgress = { progress = it },
-                onDone = { ok -> saving = false; say(if (ok) "SAVED TO MOVIES / SONASIGHT" else "COULDN'T SAVE") },
+                onDone = { ok -> saving = false; if (ok) stampKey += 1; say(if (ok) "SAVED TO MOVIES / SONASIGHT" else "COULDN'T SAVE") },
             )
         }
     }
@@ -260,7 +264,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
             ) {
                 TextKey("BACK") { onClose() }
                 Spacer(Modifier.weight(1f))
-                BasicText(if (isVideo) "EDIT  MOTION" else "EDIT  STILL", style = Label.copy(color = Ash, letterSpacing = 3.sp))
+                Bilingual(if (isVideo) "EDIT MOTION" else "EDIT STILL", "編集", color = Ash, size = 10f)
                 Spacer(Modifier.weight(1f))
                 if (saving) {
                     BasicText(if (isVideo) "$progress%" else "…", style = Numeral.copy(color = Gold), modifier = Modifier.padding(horizontal = 12.dp))
@@ -339,6 +343,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                         }
                     }
                 }
+                HankoStamp(stampKey, Modifier.align(Alignment.TopEnd).padding(14.dp))
                 notice?.let {
                     BasicText(
                         it, style = Label.copy(color = Bone, letterSpacing = 3.sp),
@@ -349,22 +354,20 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
             }
 
             // tool area
-            Column(Modifier.fillMaxWidth().height(272.dp).padding(top = 8.dp)) {
+            Column(
+                Modifier.fillMaxWidth().height(272.dp)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Gold.copy(alpha = 0.07f), Color.Transparent)))
+                    .padding(top = 8.dp),
+            ) {
                 when (tab) {
                     Tab.FILM -> {
-                        BasicText(
-                            "SCENE", style = Label.copy(color = Ash, fontSize = 9.sp),
-                            modifier = Modifier.padding(start = 28.dp, top = 4.dp),
-                        )
+                        SectionLabel("scene", "場面", Modifier.padding(start = 24.dp, top = 4.dp))
                         SceneDial(sceneId ?: "") { id ->
                             val s = Films.scene(id)
                             sceneId = id; stockId = s.stockId; recipeId = ""; adjust = Adjust.NONE
                         }
                         Spacer(Modifier.height(10.dp))
-                        BasicText(
-                            "FILM", style = Label.copy(color = Ash, fontSize = 9.sp),
-                            modifier = Modifier.padding(start = 28.dp),
-                        )
+                        SectionLabel("film", "フィルム", Modifier.padding(start = 24.dp))
                         FilmStrip(
                             recipes = recipes,
                             selectedStock = stockId,
@@ -459,7 +462,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                     ) {
                         Box(Modifier.size(4.dp).clip(CircleShape).background(if (t == tab) Gold else Color.Transparent))
                         Spacer(Modifier.height(5.dp))
-                        BasicText(t.label, style = Label.copy(color = if (t == tab) Bone else Ash, fontSize = 11.sp))
+                        Bilingual(t.label, t.jp, color = if (t == tab) Bone else Ash, size = 10f)
                     }
                 }
             }
@@ -521,7 +524,7 @@ private fun StripDivider(label: String? = null) {
         Box(Modifier.width(1.dp).height(28.dp).background(Slate))
         if (label != null) {
             Spacer(Modifier.width(10.dp))
-            BasicText(label, style = Label.copy(color = Gold, fontSize = 9.sp, letterSpacing = 3.sp))
+            BasicText("// " + label.lowercase() + "  名所", style = Numeral.copy(color = Gold, fontSize = 10.sp))
         }
     }
 }

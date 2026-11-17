@@ -161,6 +161,7 @@ fun CameraScreen(
     var sheet by remember { mutableStateOf(Sheet.NONE) }
     var notice by remember { mutableStateOf<String?>(null) }
     var focusAt by remember { mutableStateOf<Offset?>(null) }
+    var stampKey by remember { mutableIntStateOf(0) }
     val focusAnim = remember { Animatable(0f) }
     val blink = remember { Animatable(0f) }
     val gravityAngle = remember { mutableFloatStateOf(0f) }
@@ -305,6 +306,7 @@ fun CameraScreen(
                     say("COULDN'T SAVE")
                 } else {
                     shots += 1; prefs.shots = shots
+                    stampKey += 1
                     if (toRoll) {
                         rollCount += 1
                         if (rollCount >= rollSize) developRoll()
@@ -484,6 +486,7 @@ fun CameraScreen(
                         if (blink.value > 0f) drawRect(Ink.copy(alpha = blink.value * 0.9f))
                     }
 
+                    HankoStamp(stampKey, Modifier.align(Alignment.TopEnd).padding(14.dp))
                     if (countdown > 0) {
                         BasicText(
                             countdown.toString(),
@@ -504,14 +507,23 @@ fun CameraScreen(
                         Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Box(
-                            Modifier.clip(RoundedCornerShape(2.dp))
-                                .background(Ink.copy(alpha = 0.55f))
-                                .border(1.dp, Gold.copy(alpha = 0.6f), RoundedCornerShape(2.dp))
-                                .clickable { sheet = Sheet.FILM }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                        ) {
-                            BasicText(recipe?.name?.uppercase() ?: "${stock.name}  ${stock.iso}", style = Label.copy(color = Bone))
+                        Cartouche(Modifier.clickable { sheet = Sheet.FILM }) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (stock.category == "MEISHO") {
+                                    VerticalText(stock.iso, color = Gold, size = 11f)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Column {
+                                    BasicText(recipe?.name?.uppercase() ?: stock.name, style = Label.copy(color = Bone))
+                                    if (stock.category != "MEISHO" || recipe != null) {
+                                        Spacer(Modifier.height(2.dp))
+                                        BasicText(
+                                            if (recipe != null) "${stock.name} ${stock.iso}" else stock.iso,
+                                            style = Numeral.copy(color = Gold, fontSize = 9.sp),
+                                        )
+                                    }
+                                }
+                            }
                         }
                         Spacer(Modifier.weight(1f))
                         val evText = if (ev == 0f) "±0" else signed(ev)
@@ -769,7 +781,7 @@ private fun Shutter(mode: Mode, recording: Boolean, busy: Boolean, onPress: () -
 
 @Composable
 private fun ModeSwitch(mode: Mode, enabled: Boolean, onChange: (Mode) -> Unit) {
-    Column(Modifier.width(52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.width(78.dp), horizontalAlignment = Alignment.Start) {
         for (m in Mode.entries) {
             val on = m == mode
             Row(
@@ -778,7 +790,10 @@ private fun ModeSwitch(mode: Mode, enabled: Boolean, onChange: (Mode) -> Unit) {
             ) {
                 Box(Modifier.size(4.dp).clip(CircleShape).background(if (on) Gold else Color.Transparent))
                 Spacer(Modifier.width(6.dp))
-                BasicText(if (m == Mode.PHOTO) "STILL" else "MOTION", style = Label.copy(color = if (on) Bone else Ash, fontSize = 9.sp))
+                Bilingual(
+                    if (m == Mode.PHOTO) "STILL" else "MOTION", if (m == Mode.PHOTO) "静止" else "動画",
+                    color = if (on) Bone else Ash, size = 9f,
+                )
             }
         }
     }
@@ -790,8 +805,11 @@ fun Scrim(onClose: () -> Unit, content: @Composable () -> Unit) {
     Box(
         Modifier.fillMaxSize().background(Ink.copy(alpha = 0.94f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClose() }
-            .systemBarsPadding(),
-    ) { content() }
+    ) {
+        Seigaiha(alpha = 0.05f)
+        Bokashi(height = 160.dp, strength = 0.14f)
+        Box(Modifier.fillMaxSize().systemBarsPadding()) { content() }
+    }
 }
 
 @Composable
@@ -808,12 +826,7 @@ fun FilmPicker(
     Scrim(onClose) {
         LazyColumn(Modifier.fillMaxSize().padding(top = 24.dp)) {
             if (recipes.isNotEmpty()) {
-                item {
-                    BasicText(
-                        "YOUR RECIPES", style = Label.copy(color = Gold, letterSpacing = 4.sp),
-                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-                    )
-                }
+                item { SectionLabel("your recipes", "レシピ", Modifier.padding(horizontal = 24.dp, vertical = 10.dp)) }
                 items(recipes, key = { it.id }) { r ->
                     val asking = confirm == r.id
                     val st = Films.stock(r.stockId)
@@ -828,12 +841,7 @@ fun FilmPicker(
                 }
                 item { Spacer(Modifier.height(18.dp)) }
             }
-            item {
-                BasicText(
-                    "FILM", style = Label.copy(color = Gold, letterSpacing = 4.sp),
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-                )
-            }
+            item { SectionLabel("film", "フィルム", Modifier.padding(horizontal = 24.dp, vertical = 10.dp)) }
             items(Films.stocks, key = { it.id }) { s ->
                 PickerRow(
                     title = s.name, badge = s.iso, note = s.note,
@@ -842,8 +850,8 @@ fun FilmPicker(
                 )
             }
             item {
-                Column(Modifier.padding(start = 28.dp, end = 28.dp, top = 26.dp, bottom = 8.dp)) {
-                    BasicText("MEISHO", style = Label.copy(color = Gold, letterSpacing = 4.sp))
+                Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 26.dp, bottom = 10.dp)) {
+                    SectionLabel("meisho", "名所")
                     Spacer(Modifier.height(4.dp))
                     BasicText("looks named after places in Japan", style = Body)
                 }
@@ -856,7 +864,7 @@ fun FilmPicker(
                 )
             }
             if (recipes.isNotEmpty()) {
-                item { BasicText("long-press a recipe to delete it", style = Body, modifier = Modifier.padding(28.dp)) }
+                item { BasicText("long-press a recipe to delete it", style = Body, modifier = Modifier.padding(24.dp)) }
             }
         }
     }
@@ -866,14 +874,15 @@ fun FilmPicker(
 private fun PickerRow(title: String, badge: String, note: String, on: Boolean, onTap: () -> Unit, onLong: (() -> Unit)?) {
     Row(
         Modifier.fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp)
+            .background(if (on) Gold.copy(alpha = 0.06f) else Coal.copy(alpha = 0.6f))
+            .border(1.dp, if (on) Gold else Slate, RoundedCornerShape(2.dp))
             .pointerInput(title, onLong != null) {
                 detectTapGestures(onTap = { onTap() }, onLongPress = { onLong?.invoke() })
             }
-            .padding(horizontal = 28.dp, vertical = 13.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(2.dp).height(34.dp).background(if (on) Gold else Slate))
-        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.Bottom) {
                 BasicText(
@@ -908,10 +917,14 @@ fun TuneSheet(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .background(Ink.copy(alpha = 0.96f))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
-                .navigationBarsPadding()
-                .padding(vertical = 14.dp),
+                .navigationBarsPadding(),
         ) {
+            Box {
+                Bokashi(height = 48.dp, strength = 0.12f)
+                SectionLabel("tune", "調整", Modifier.padding(start = 24.dp, top = 14.dp))
+            }
             TuneSliders(adjust, showExposure, onChange)
+            Spacer(Modifier.height(6.dp))
             Spacer(Modifier.height(8.dp))
             RecipeBar(naming, name, { name = it.take(24) }, onReset = { onChange(Adjust.NONE) }, onStartNaming = { naming = true },
                 onSave = { onSave(name.trim()); naming = false; name = "" }, onDone = onClose)
@@ -979,17 +992,18 @@ private fun MenuSheet(
 ) {
     Scrim(onClose) {
         Column(Modifier.fillMaxSize().padding(top = 24.dp)) {
-            MenuRow("DATE STAMP", if (dateStamp) "ON" else "OFF", "a gold date in the corner of stills", onDate)
+            SectionLabel("settings", "設定", Modifier.padding(horizontal = 24.dp, vertical = 10.dp))
+            MenuRow("DATE STAMP", "日付", if (dateStamp) "ON" else "OFF", "a gold date in the corner of stills", onDate)
             MenuRow(
-                "ROLL", if (rollSize == 0) "OFF" else "$rollSize EXP",
+                "ROLL", "フィルム", if (rollSize == 0) "OFF" else "$rollSize EXP",
                 if (rollSize == 0) "shoot a roll of 24 or 36, seen only once it's developed"
                 else "$rollCount of $rollSize shot. the roll develops when it's full",
                 onRoll,
             )
-            if (rollCount > 0) MenuRow("DEVELOP NOW", "$rollCount", "send what's on the roll to your gallery", onDevelop)
-            MenuRow("LOCATION", if (location) "ON" else "OFF", "save where each photo and video was taken", onLocation)
-            MenuRow("HIGHLIGHT WARNING", if (zebra) "ON" else "OFF", "gold stripes where the brightest parts lose detail", onZebra)
-            MenuRow("EDIT", "", "open a photo or video from your gallery", onEdit)
+            if (rollCount > 0) MenuRow("DEVELOP NOW", "現像", "$rollCount", "send what's on the roll to your gallery", onDevelop)
+            MenuRow("LOCATION", "位置", if (location) "ON" else "OFF", "save where each photo and video was taken", onLocation)
+            MenuRow("HIGHLIGHT WARNING", "白飛び", if (zebra) "ON" else "OFF", "gold stripes where the brightest parts lose detail", onZebra)
+            MenuRow("EDIT", "編集", "", "open a photo or video from your gallery", onEdit)
             Spacer(Modifier.weight(1f))
             BasicText(
                 "the volume keys work as a shutter too.",
@@ -1000,13 +1014,13 @@ private fun MenuSheet(
 }
 
 @Composable
-private fun MenuRow(title: String, value: String, note: String, onTap: () -> Unit) {
+private fun MenuRow(title: String, jp: String, value: String, note: String, onTap: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable { onTap() }.padding(horizontal = 28.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            BasicText(title, style = Label.copy(color = Bone, fontSize = 12.sp, letterSpacing = 2.5.sp))
+            Bilingual(title, jp, color = Bone, size = 12f)
             Spacer(Modifier.height(4.dp))
             BasicText(note, style = Body)
         }
@@ -1016,9 +1030,13 @@ private fun MenuRow(title: String, value: String, note: String, onTap: () -> Uni
 
 @Composable
 fun PermissionScreen(onAsk: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Ink).systemBarsPadding(), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize().background(Ink), contentAlignment = Alignment.Center) {
+        Seigaiha(alpha = 0.06f)
+        Bokashi(height = 220.dp, strength = 0.16f, modifier = Modifier.align(Alignment.TopCenter))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            BasicText("SONASIGHT", style = Label.copy(color = Gold, fontSize = 13.sp, letterSpacing = 5.sp))
+            Cartouche(filled = Ink) {
+                BasicText("SONASIGHT", style = Label.copy(color = Gold, fontSize = 13.sp, letterSpacing = 5.sp))
+            }
             Spacer(Modifier.height(18.dp))
             BasicText(
                 "Camera access is needed to shoot.\nMicrophone is used for sound in video.",
