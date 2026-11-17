@@ -336,7 +336,8 @@ fun CameraScreen(
         scope.launch {
             val toRoll = rollSize > 0
             val l = Look.of(stock, scene, adjust)
-            while (bursting && burstCount < BURST_MAX && !(toRoll && rollCount + burstCount >= rollSize)) {
+            val onRollAlready = rollCount
+            while (bursting && burstCount < BURST_MAX && !(toRoll && onRollAlready + burstCount >= rollSize)) {
                 val got = kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
                     view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                     rig.takePhoto(
