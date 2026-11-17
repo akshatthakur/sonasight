@@ -1,0 +1,49 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Unpack the signing key
+        env:
+          SS_KEYSTORE_B64: ${{ secrets.SS_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$SS_KEYSTORE_B64" ]; then
+            echo "$SS_KEYSTORE_B64" | tr -d ' \n\r' | base64 -d > "$RUNNER_TEMP/ss.jks"
+            echo "SS_KEYSTORE_FILE=$RUNNER_TEMP/ss.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No SS_KEYSTORE_B64 secret, so this build is signed with a throwaway debug key. Add the secret so each build installs over the last."
+          fi
+      - name: Build release APK
+        env:
+          SS_STORE_PASSWORD: ${{ secrets.SS_STORE_PASSWORD }}
+          SS_KEY_ALIAS: ${{ secrets.SS_KEY_ALIAS }}
+        run: chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+      - name: Rename
+        run: cp app/build/outputs/apk/release/app-release.apk SonaSight.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SonaSight-apk
+          path: SonaSight.apk
+      - name: Publish as the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest SonaSight.apk \
+            --title "SonaSight (latest build)" \
+            --notes "Built from ${GITHUB_SHA::7}. Download SonaSight.apk below and open it on your phone to install." \
+            --target "$GITHUB_SHA"

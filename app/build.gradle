@@ -1,0 +1,73 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+android {
+    namespace 'com.sonasight.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.sonasight.app'
+        minSdk 29
+        targetSdk 35
+        // goes up with every CI build so Android treats each one as an update
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger())
+        versionName "0.1." + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+    }
+
+    // One permanent key so each build installs over the last one.
+    // CI decodes the SS_KEYSTORE_B64 secret into the file named by SS_KEYSTORE_FILE.
+    def storePw = System.getenv('SS_STORE_PASSWORD')
+    def storePath = System.getenv('SS_KEYSTORE_FILE')
+    def alias = System.getenv('SS_KEY_ALIAS') ?: 'sonasight'
+    if (!storePath) storePw = null
+    signingConfigs {
+        release {
+            storeFile storePath ? file(storePath) : null
+            storePassword storePw
+            keyAlias alias
+            keyPassword storePw
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig storePw ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        compose true
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    def camerax = '1.4.1'
+    implementation "androidx.camera:camera-core:$camerax"
+    implementation "androidx.camera:camera-camera2:$camerax"
+    implementation "androidx.camera:camera-lifecycle:$camerax"
+    implementation "androidx.camera:camera-video:$camerax"
+    implementation "androidx.camera:camera-view:$camerax"
+
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
+
+    implementation platform('androidx.compose:compose-bom:2024.12.01')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.foundation:foundation'
+}
