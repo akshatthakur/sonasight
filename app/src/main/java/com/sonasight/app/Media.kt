@@ -23,6 +23,8 @@ data class ShotInfo(
     val focalMm: Int?,
     val location: Location?,
     val taken: Date = Date(),
+    /** Degrees to rotate the picture to level it, from the level at the moment of capture. */
+    val straighten: Float? = null,
 )
 
 object Media {
@@ -74,7 +76,8 @@ object Media {
         exif.setAttribute(ExifInterface.TAG_SOFTWARE, "SonaSight")
         val desc = listOfNotNull(info.film, info.scene).joinToString(" / ")
         exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, desc)
-        exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "Film: $desc")
+        val level = info.straighten?.let { "; straighten: " + String.format(Locale.US, "%.2f", it) } ?: ""
+        exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "Film: $desc$level")
         exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
         exif.saveAttributes()
         return f
@@ -122,11 +125,15 @@ object Media {
 
     fun rollCount(context: Context) = rollDir(context).listFiles { f -> f.name.endsWith(".jpg") }?.size ?: 0
 
-    /** Moves every frame on the roll into the gallery. Returns the last one. */
-    fun developRoll(context: Context): Uri? {
-        val files = rollDir(context).listFiles { f -> f.name.endsWith(".jpg") }?.sortedBy { it.name } ?: return null
-        var last: Uri? = null
-        for (f in files) last = publishImage(context, f) ?: last
-        return last
+    /** Moves every frame on the roll into the gallery, in the order they were shot. */
+    fun developRoll(context: Context): List<Uri> {
+        val files = rollDir(context).listFiles { f -> f.name.endsWith(".jpg") }?.sortedBy { it.name } ?: return emptyList()
+        return files.mapNotNull { publishImage(context, it) }
+    }
+
+    /** The straighten angle SonaSight saved in a photo, if any. */
+    fun savedStraighten(exif: ExifInterface?): Float? {
+        val c = exif?.getAttribute(ExifInterface.TAG_USER_COMMENT) ?: return null
+        return Regex("straighten: (-?[0-9.]+)").find(c)?.groupValues?.get(1)?.toFloatOrNull()
     }
 }

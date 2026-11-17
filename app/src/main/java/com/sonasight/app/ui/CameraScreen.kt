@@ -63,6 +63,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -90,6 +91,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.sonasight.app.Adjust
 import com.sonasight.app.Aspect
 import com.sonasight.app.CameraRig
+import com.sonasight.app.ContactSheet
 import com.sonasight.app.Films
 import com.sonasight.app.LocationTracker
 import com.sonasight.app.Look
@@ -110,6 +112,8 @@ import kotlin.math.atan2
 import kotlin.math.roundToInt
 
 private val LENSES = listOf(24, 28, 35, 50)
+private const val NIGHT_FRAMES = 6
+private const val BURST_MAX = 12
 
 private enum class Sheet { NONE, FILM, TUNE, MENU }
 
@@ -120,6 +124,7 @@ fun CameraScreen(
     prefs: Prefs,
     shutterPresses: State<Int>,
     requestedMode: MutableState<Mode?>,
+    unlocked: (() -> Unit) -> Unit,
     onEdit: (Uri) -> Unit,
 ) {
     val context = LocalContext.current
@@ -162,6 +167,14 @@ fun CameraScreen(
     var notice by remember { mutableStateOf<String?>(null) }
     var focusAt by remember { mutableStateOf<Offset?>(null) }
     var stampKey by remember { mutableIntStateOf(0) }
+    var snap by remember { mutableFloatStateOf(prefs.snap) }
+    var canSnap by remember { mutableStateOf(false) }
+    var night by remember { mutableStateOf(prefs.night) }
+    var nightFrame by remember { mutableIntStateOf(0) }
+    var bursting by remember { mutableStateOf(false) }
+    var burstCount by remember { mutableIntStateOf(0) }
+    var upright by remember { mutableStateOf(true) }
+    var lastRoll by remember { mutableStateOf(prefs.lastRoll) }
     val focusAnim = remember { Animatable(0f) }
     val blink = remember { Animatable(0f) }
     val gravityAngle = remember { mutableFloatStateOf(0f) }
@@ -202,6 +215,8 @@ fun CameraScreen(
             ready = true
             rig.setFocal(lens)
             rig.setEv(ev)
+            canSnap = rig.canSnapFocus()
+            rig.setSnapFocus(if (snap >= 0f) snap else null)
         }
         onDispose {
             rig.onZoom = null
@@ -214,11 +229,14 @@ fun CameraScreen(
             rig.bind(previewView, mode, front)
             rig.setFocal(lens)
             rig.setEv(ev)
+            canSnap = rig.canSnapFocus()
+            rig.setSnapFocus(if (snap >= 0f) snap else null)
             torch = false
         }
     }
     LaunchedEffect(ev) { if (ready) rig.setEv(ev) }
     LaunchedEffect(torch) { rig.setTorch(torch) }
+    LaunchedEffect(snap) { if (ready) rig.setSnapFocus(if (snap >= 0f) snap else null) }
     LaunchedEffect(locationOn) { if (locationOn) tracker.start() else tracker.stop() }
     LaunchedEffect(requestedMode.value) {
         requestedMode.value?.let { if (!recording) { mode = it; prefs.mode = it } }
@@ -247,7 +265,11 @@ fun CameraScreen(
                         270 -> Surface.ROTATION_270
                         else -> Surface.ROTATION_0
                     }
-                    if (r != rot) { rot = r; rig.setRotation(r) }
+                    if (r != rot) {
+                        rot = r
+                        rig.setRotation(r)
+                        upright = r == Surface.ROTATION_0 || r == Surface.ROTATION_180
+                    }
                 }
                 val isLevel = abs(angle - near) < 0.8f
                 if (isLevel && !wasLevel && prefs.level) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -274,9 +296,14 @@ fun CameraScreen(
         val n = rollCount
         scope.launch {
             developing = true
-            val uri = withContext(Dispatchers.IO) { Media.developRoll(context) }
+            val frames = withContext(Dispatchers.IO) { Media.developRoll(context) }
+            val uri = frames.lastOrNull()
             developing = false
             rollCount = 0
+            if (frames.isNotEmpty()) {
+                lastRoll = frames.map { it.toString() }
+                prefs.lastRoll = lastRoll
+            }
             if (uri != null) {
                 lastUri = uri
                 thumb = withContext(Dispatchers.IO) {
@@ -287,6 +314,54 @@ fun CameraScreen(
         }
     }
 
+    /** What gets written into the photo, including how far off level the phone was. */
+    fun shotInfo(toRoll: Boolean): ShotInfo {
+        val a = gravityAngle.floatValue
+        val tilt = a - (a / 90f).roundToInt() * 90f
+        val fix = if (abs(tilt) < 15f) (if (front) tilt else -tilt) else null
+        return ShotInfo(
+            film = recipe?.name ?: "${stock.name} ${stock.iso}",
+            scene = scene.name,
+            focalMm = (zoom * 24f).roundToInt(),
+            location = if (locationOn) tracker.last else null,
+            straighten = fix,
+        )
+    }
+
+    /** Hold the shutter: frames keep coming until you let go, up to [BURST_MAX]. */
+    fun startBurst() {
+        if (!ready || mode != Mode.PHOTO || bursting || night || countdownJob != null) return
+        bursting = true
+        burstCount = 0
+        scope.launch {
+            val toRoll = rollSize > 0
+            val l = Look.of(stock, scene, adjust)
+            while (bursting && burstCount < BURST_MAX && !(toRoll && rollCount + burstCount >= rollSize)) {
+                val got = kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    rig.takePhoto(
+                        l, aspect, front, dateStamp, shotInfo(toRoll), toRoll, quiet = burstCount > 0,
+                        onCaptured = { ok -> if (cont.isActive) cont.resumeWith(Result.success(ok)) },
+                    ) { ok, uri, bmp ->
+                        if (ok) {
+                            shots += 1; prefs.shots = shots
+                            if (toRoll) {
+                                rollCount += 1
+                                if (rollCount >= rollSize) developRoll()
+                            } else {
+                                lastUri = uri; thumb = bmp
+                            }
+                        }
+                    }
+                }
+                if (!got) break
+                burstCount += 1
+            }
+            bursting = false
+            stampKey += 1
+        }
+    }
+
     fun fire() {
         if (mode == Mode.PHOTO) {
             if (developing) return
@@ -294,14 +369,10 @@ fun CameraScreen(
             view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             scope.launch { blink.snapTo(1f); blink.animateTo(0f, tween(260)) }
             val toRoll = rollSize > 0
-            val info = ShotInfo(
-                film = recipe?.name ?: "${stock.name} ${stock.iso}",
-                scene = scene.name,
-                focalMm = (zoom * 24f).roundToInt(),
-                location = if (locationOn) tracker.last else null,
-            )
-            rig.takePhoto(Look.of(stock, scene, adjust), aspect, front, dateStamp, info, toRoll) { ok, uri, bmp ->
+            val info = shotInfo(toRoll)
+            val done: (Boolean, Uri?, Bitmap?) -> Unit = { ok, uri, bmp ->
                 developing = false
+                nightFrame = 0
                 if (!ok) {
                     say("COULDN'T SAVE")
                 } else {
@@ -314,6 +385,13 @@ fun CameraScreen(
                         lastUri = uri; thumb = bmp
                     }
                 }
+            }
+            if (night) {
+                nightFrame = 0
+                rig.takeNight(NIGHT_FRAMES, Look.of(stock, scene, adjust), aspect, front, dateStamp, info, toRoll,
+                    onFrame = { nightFrame = it }, done = done)
+            } else {
+                rig.takePhoto(Look.of(stock, scene, adjust), aspect, front, dateStamp, info, toRoll, done = done)
             }
         } else if (!recording) {
             recording = true
@@ -390,7 +468,7 @@ fun CameraScreen(
                     timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 }; prefs.timer = timer
                 }
                 if (ready && rig.hasTorch) TextKey("TORCH", active = torch) { torch = !torch }
-                if (rig.hasFront && !recording) TextKey("FLIP") { front = !front; prefs.front = front }
+                if (mode == Mode.PHOTO) TextKey("NIGHT", active = night) { night = !night; prefs.night = night }
                 TextKey("•••") { sheet = Sheet.MENU }
             }
 
@@ -424,7 +502,7 @@ fun CameraScreen(
                                 when (e.actionMasked) {
                                     MotionEvent.ACTION_DOWN -> scaling = false
                                     MotionEvent.ACTION_UP -> if (!scaling) {
-                                        rig.focus(previewView, e.x, e.y)
+                                        rig.focus(previewView, e.x, e.y, exposureOnly = prefs.snap >= 0f)
                                         focusAt = Offset(e.x, e.y)
                                         scope.launch { focusAnim.snapTo(1f); focusAnim.animateTo(0f, tween(1400)) }
                                         v.performClick()
@@ -487,6 +565,22 @@ fun CameraScreen(
                     }
 
                     HankoStamp(stampKey, Modifier.align(Alignment.TopEnd).padding(14.dp))
+                    if (nightFrame > 0 || (developing && night)) {
+                        BasicText(
+                            if (nightFrame in 1 until NIGHT_FRAMES) "HOLD STILL  $nightFrame / $NIGHT_FRAMES" else "STACKING",
+                            style = Label.copy(color = Gold, letterSpacing = 3.sp),
+                            modifier = Modifier.align(Alignment.Center)
+                                .background(Ink.copy(alpha = 0.6f)).padding(horizontal = 14.dp, vertical = 8.dp),
+                        )
+                    }
+                    if (bursting) {
+                        BasicText(
+                            "BURST  $burstCount",
+                            style = Numeral.copy(color = Gold),
+                            modifier = Modifier.align(Alignment.TopStart).padding(14.dp)
+                                .background(Ink.copy(alpha = 0.6f)).padding(horizontal = 10.dp, vertical = 5.dp),
+                        )
+                    }
                     if (countdown > 0) {
                         BasicText(
                             countdown.toString(),
@@ -529,7 +623,7 @@ fun CameraScreen(
                         val evText = if (ev == 0f) "±0" else signed(ev)
                         val mm = (zoom * 24f).roundToInt()
                         BasicText(
-                            "EV $evText   ${mm}MM" + if (mode == Mode.PHOTO) "   ${aspect.label}" else "   16:9",
+                            "EV $evText   ${mm}MM" + if (mode == Mode.PHOTO) "   ${aspect.label(upright)}" else if (upright) "   9:16" else "   16:9",
                             style = Numeral.copy(color = Mist, fontSize = 10.sp),
                             modifier = Modifier.background(Ink.copy(alpha = 0.45f)).padding(horizontal = 6.dp, vertical = 3.dp),
                         )
@@ -549,10 +643,28 @@ fun CameraScreen(
                     TextKey("TURN") { turn = (turn + 1) % 4; prefs.turn = turn }
                 }
                 TextKey("LEVEL", active = level) { level = !level; prefs.level = level }
+                if (canSnap) {
+                    val label = when {
+                        snap < 0f -> "AF"
+                        snap == 0f -> "∞"
+                        else -> "${snap.roundToInt()}M"
+                    }
+                    TextKey(label, active = snap >= 0f) {
+                        // AF -> 1m -> 2m -> 5m -> infinity -> AF
+                        snap = when {
+                            snap < 0f -> 1f
+                            snap == 1f -> 2f
+                            snap == 2f -> 5f
+                            snap == 5f -> 0f
+                            else -> -1f
+                        }
+                        prefs.snap = snap
+                    }
+                }
                 Spacer(Modifier.weight(1f))
                 TextKey("TUNE", active = adjust != Adjust.NONE) { sheet = Sheet.TUNE }
                 if (mode == Mode.PHOTO) {
-                    TextKey(aspect.label, active = true) {
+                    TextKey(aspect.label(upright), active = true) {
                         aspect = Aspect.entries[(aspect.ordinal + 1) % Aspect.entries.size]; prefs.aspect = aspect
                     }
                 }
@@ -591,7 +703,7 @@ fun CameraScreen(
                         .clickable(enabled = !recording) {
                             val u = lastUri
                             if (u != null) onEdit(u)
-                            else pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                            else unlocked { pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
                         },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -606,9 +718,24 @@ fun CameraScreen(
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                Shutter(mode, recording, developing || countdown > 0) { shutter() }
+                Shutter(
+                    mode, recording, developing || countdown > 0 || bursting,
+                    onLongStart = { startBurst() },
+                    onLongEnd = { bursting = false },
+                ) { shutter() }
                 Spacer(Modifier.weight(1f))
-                ModeSwitch(mode, enabled = !recording && countdown == 0) { m -> mode = m; prefs.mode = m }
+                Column {
+                    ModeSwitch(mode, enabled = !recording && countdown == 0 && !bursting) { m -> mode = m; prefs.mode = m }
+                    if (rig.hasFront && !recording) {
+                        Row(
+                            Modifier.clickable { front = !front; prefs.front = front }.padding(vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Spacer(Modifier.width(10.dp))
+                            Bilingual("FLIP", "反転", color = if (front) Gold else Ash, size = 9f)
+                        }
+                    }
+                }
             }
         }
 
@@ -666,9 +793,30 @@ fun CameraScreen(
                     else askLocation.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                 },
                 onZebra = { zebra = !zebra; prefs.zebra = zebra },
+                lastRollCount = lastRoll.size,
+                onSheet = { roll ->
+                    sheet = Sheet.NONE
+                    unlocked {
+                        say("MAKING CONTACT SHEET")
+                        scope.launch {
+                            val uri = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    if (roll) {
+                                        ContactSheet.make(context, lastRoll.map { Uri.parse(it) }, "ROLL  ·  ${lastRoll.size} EXP")
+                                    } else {
+                                        val today = java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.US).format(java.util.Date()).uppercase()
+                                        ContactSheet.make(context, ContactSheet.today(context), today)
+                                    }
+                                }.getOrNull()
+                            }
+                            if (uri != null) { lastUri = uri; stampKey += 1; say("CONTACT SHEET SAVED") }
+                            else say("NOTHING TO PUT ON A SHEET YET")
+                        }
+                    }
+                },
                 onEdit = {
                     sheet = Sheet.NONE
-                    pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                    unlocked { pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
                 },
                 onClose = { sheet = Sheet.NONE },
             )
@@ -755,16 +903,38 @@ fun SceneDial(selected: String, onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun Shutter(mode: Mode, recording: Boolean, busy: Boolean, onPress: () -> Unit) {
+private fun Shutter(
+    mode: Mode,
+    recording: Boolean,
+    busy: Boolean,
+    onLongStart: () -> Unit,
+    onLongEnd: () -> Unit,
+    onPress: () -> Unit,
+) {
     val press = remember { Animatable(1f) }
     val scope = rememberCoroutineScope()
+    val tap by rememberUpdatedState(onPress)
+    val longStart by rememberUpdatedState(onLongStart)
+    val longEnd by rememberUpdatedState(onLongEnd)
     Box(
         Modifier.size(76.dp).scale(press.value)
             .clip(CircleShape)
             .border(1.5.dp, if (recording) Gold else Bone, CircleShape)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                scope.launch { press.snapTo(0.92f); press.animateTo(1f, tween(180)) }
-                onPress()
+            .pointerInput(mode) {
+                detectTapGestures(onPress = {
+                    scope.launch { press.animateTo(0.92f, tween(80)) }
+                    // a quick press takes one picture; holding it in stills mode starts a burst
+                    val released = kotlinx.coroutines.withTimeoutOrNull(380L) { tryAwaitRelease() }
+                    if (released == null && mode == Mode.PHOTO) {
+                        longStart()
+                        tryAwaitRelease()
+                        longEnd()
+                    } else if (released == true || released == null) {
+                        if (released == null) tryAwaitRelease()
+                        tap()
+                    }
+                    scope.launch { press.animateTo(1f, tween(160)) }
+                })
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -987,6 +1157,8 @@ private fun MenuSheet(
     onDevelop: () -> Unit,
     onLocation: () -> Unit,
     onZebra: () -> Unit,
+    lastRollCount: Int,
+    onSheet: (roll: Boolean) -> Unit,
     onEdit: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -1003,6 +1175,10 @@ private fun MenuSheet(
             if (rollCount > 0) MenuRow("DEVELOP NOW", "現像", "$rollCount", "send what's on the roll to your gallery", onDevelop)
             MenuRow("LOCATION", "位置", if (location) "ON" else "OFF", "save where each photo and video was taken", onLocation)
             MenuRow("HIGHLIGHT WARNING", "白飛び", if (zebra) "ON" else "OFF", "gold stripes where the brightest parts lose detail", onZebra)
+            MenuRow("CONTACT SHEET", "密着", "TODAY", "today's photos on one sheet, saved to your gallery") { onSheet(false) }
+            if (lastRollCount > 0) {
+                MenuRow("CONTACT SHEET", "密着", "ROLL", "the last roll you developed, $lastRollCount frames") { onSheet(true) }
+            }
             MenuRow("EDIT", "編集", "", "open a photo or video from your gallery", onEdit)
             Spacer(Modifier.weight(1f))
             BasicText(

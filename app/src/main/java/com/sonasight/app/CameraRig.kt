@@ -13,6 +13,13 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
@@ -42,6 +49,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 
 enum class Mode { PHOTO, VIDEO }
@@ -190,10 +198,12 @@ class CameraRig(
         cam.cameraControl.setExposureCompensationIndex(idx)
     }
 
-    fun focus(previewView: PreviewView, x: Float, y: Float) {
+    /** Tap to focus and meter. With snap focus on, a tap only sets the exposure. */
+    fun focus(previewView: PreviewView, x: Float, y: Float, exposureOnly: Boolean = false) {
         val cam = camera ?: return
         val point = previewView.meteringPointFactory.createPoint(x, y)
-        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+        val flags = if (exposureOnly) FocusMeteringAction.FLAG_AE else FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+        val action = FocusMeteringAction.Builder(point, flags)
             .setAutoCancelDuration(4, TimeUnit.SECONDS)
             .build()
         cam.cameraControl.startFocusAndMetering(action)
@@ -201,9 +211,16 @@ class CameraRig(
 
     // ---- Photo ----
 
+    private val developer = Executors.newSingleThreadExecutor()
+    private val pending = AtomicInteger(0)
+
+    /** Photos still being developed. */
+    val developingCount: Int get() = pending.get()
+
     /**
      * Takes a photo, develops it through the film look and saves it.
      * With [toRoll] the frame goes into the private roll folder instead of the gallery.
+     * [onCaptured] fires as soon as the frame is in hand, so a burst can go on to the next.
      * [done] gets the saved uri (null for roll frames or failures) and a small thumbnail.
      */
     fun takePhoto(
@@ -213,43 +230,85 @@ class CameraRig(
         dateStamp: Boolean,
         info: ShotInfo,
         toRoll: Boolean,
+        quiet: Boolean = false,
+        onCaptured: (Boolean) -> Unit = {},
         done: (ok: Boolean, uri: Uri?, thumb: Bitmap?) -> Unit,
     ) {
-        val ic = imageCapture ?: return done(false, null, null)
+        if (!quiet) sound.play(MediaActionSound.SHUTTER_CLICK)
+        capture(front, aspect, Int.MAX_VALUE) { bmp ->
+            if (bmp == null) {
+                main.post { onCaptured(false); done(false, null, null) }
+                return@capture
+            }
+            // don't let frames pile up faster than they can be developed
+            while (pending.get() >= 2) Thread.sleep(40)
+            main.post { onCaptured(true) }
+            developAndSave(bmp, look, dateStamp, info, toRoll, done)
+        }
+    }
+
+    /**
+     * Night mode: takes [frames] pictures in a row, lines them up and averages them, then
+     * develops the result like any other photo. [onFrame] reports each frame as it lands.
+     */
+    fun takeNight(
+        frames: Int,
+        look: Look,
+        aspect: Aspect,
+        front: Boolean,
+        dateStamp: Boolean,
+        info: ShotInfo,
+        toRoll: Boolean,
+        onFrame: (Int) -> Unit,
+        done: (ok: Boolean, uri: Uri?, thumb: Bitmap?) -> Unit,
+    ) {
         sound.play(MediaActionSound.SHUTTER_CLICK)
+        val stack = NightStack()
+        fun next(i: Int) {
+            capture(front, aspect, NIGHT_MAX_SIDE) { bmp ->
+                if (bmp != null) {
+                    try { stack.add(bmp) } catch (e: Throwable) { Log.e(TAG, "stack failed", e) }
+                    bmp.recycle()
+                }
+                main.post { onFrame(i + 1) }
+                if (i + 1 < frames) {
+                    main.post { next(i + 1) }
+                } else if (stack.frames == 0) {
+                    main.post { done(false, null, null) }
+                } else {
+                    val result = try { stack.result() } catch (e: Throwable) { null }
+                    if (result == null) main.post { done(false, null, null) }
+                    else developAndSave(result, look, dateStamp, info, toRoll, done)
+                }
+            }
+        }
+        next(0)
+    }
+
+    /** Grabs one frame as an upright, cropped bitmap no larger than [maxSide]. */
+    private fun capture(front: Boolean, aspect: Aspect, maxSide: Int, got: (Bitmap?) -> Unit) {
+        val ic = imageCapture ?: return got(null)
         ic.takePicture(work, object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
-                var ok = false
-                var uri: Uri? = null
-                var thumb: Bitmap? = null
-                try {
-                    val developed = develop(image, look, aspect, front)
-                    image.close()
-                    if (dateStamp) Media.drawDate(developed, info.taken)
-                    val file = if (toRoll) Media.writeJpeg(context, developed, info, Media.rollDir(context))
-                    else Media.writeJpeg(context, developed, info)
-                    if (!toRoll) uri = Media.publishImage(context, file)
-                    val th = 240
-                    thumb = Bitmap.createScaledBitmap(
-                        developed, (developed.width * th / developed.height.toFloat()).toInt().coerceAtLeast(1), th, true,
-                    )
-                    developed.recycle()
-                    ok = toRoll || uri != null
+                val bmp = try {
+                    upright(image, front, aspect, maxSide)
                 } catch (e: Throwable) {
-                    Log.e(TAG, "develop failed", e)
-                    runCatching { image.close() }
+                    Log.e(TAG, "capture failed", e)
+                    null
+                } finally {
+                    image.close()
                 }
-                main.post { done(ok, uri, thumb) }
+                got(bmp)
             }
 
             override fun onError(exception: ImageCaptureException) {
                 Log.e(TAG, "capture failed", exception)
-                main.post { done(false, null, null) }
+                got(null)
             }
         })
     }
 
-    private fun develop(image: ImageProxy, look: Look, aspect: Aspect, front: Boolean): Bitmap {
+    private fun upright(image: ImageProxy, front: Boolean, aspect: Aspect, maxSide: Int): Bitmap {
         val raw = image.toBitmap()
         val m = Matrix()
         m.postRotate(image.imageInfo.rotationDegrees.toFloat())
@@ -257,10 +316,72 @@ class CameraRig(
         var bmp = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
         if (bmp !== raw) raw.recycle()
         bmp = Imaging.cropToAspect(bmp, aspect.ratio, null, 0f)
-        bmp = Imaging.fitForGl(bmp, processor.maxTextureSize)
-        val developed = processor.renderStill(bmp, look)
-        bmp.recycle()
-        return developed
+        return Imaging.fitForGl(bmp, minOf(maxSide, processor.maxTextureSize))
+    }
+
+    private fun developAndSave(
+        bmp: Bitmap,
+        look: Look,
+        dateStamp: Boolean,
+        info: ShotInfo,
+        toRoll: Boolean,
+        done: (ok: Boolean, uri: Uri?, thumb: Bitmap?) -> Unit,
+    ) {
+        pending.incrementAndGet()
+        developer.execute {
+            var ok = false
+            var uri: Uri? = null
+            var thumb: Bitmap? = null
+            try {
+                val developed = processor.renderStill(bmp, look)
+                bmp.recycle()
+                if (dateStamp) Media.drawDate(developed, info.taken)
+                val file = if (toRoll) Media.writeJpeg(context, developed, info, Media.rollDir(context))
+                else Media.writeJpeg(context, developed, info)
+                if (!toRoll) uri = Media.publishImage(context, file)
+                val th = 240
+                thumb = Bitmap.createScaledBitmap(
+                    developed, (developed.width * th / developed.height.toFloat()).toInt().coerceAtLeast(1), th, true,
+                )
+                developed.recycle()
+                ok = toRoll || uri != null
+            } catch (e: Throwable) {
+                Log.e(TAG, "develop failed", e)
+            } finally {
+                pending.decrementAndGet()
+            }
+            main.post { done(ok, uri, thumb) }
+        }
+    }
+
+    // ---- Snap focus ----
+
+    /** True when the lens can be set to a distance by hand. */
+    @OptIn(ExperimentalCamera2Interop::class)
+    fun canSnapFocus(): Boolean {
+        val cam = camera ?: return false
+        val min = runCatching {
+            Camera2CameraInfo.from(cam.cameraInfo).getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+        }.getOrNull() ?: 0f
+        return min > 0f
+    }
+
+    /** Fixes focus at [meters] (0 for infinity), or goes back to autofocus when null. */
+    @OptIn(ExperimentalCamera2Interop::class)
+    fun setSnapFocus(meters: Float?) {
+        val cam = camera ?: return
+        val c2 = Camera2CameraControl.from(cam.cameraControl)
+        if (meters == null || !canSnapFocus()) {
+            c2.clearCaptureRequestOptions()
+            return
+        }
+        val diopters = if (meters <= 0f) 0f else 1f / meters
+        c2.setCaptureRequestOptions(
+            CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, diopters)
+                .build(),
+        )
     }
 
     // ---- Video ----
@@ -305,11 +426,14 @@ class CameraRig(
         recording?.stop()
         provider?.unbindAll()
         work.shutdown()
+        developer.shutdown()
         sound.release()
         processor.release()
     }
 
     companion object {
         private const val TAG = "SonaSight"
+        /** Night frames are stacked at this size so the stack fits in memory. */
+        private const val NIGHT_MAX_SIDE = 3000
     }
 }

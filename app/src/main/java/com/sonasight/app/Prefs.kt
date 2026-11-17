@@ -82,6 +82,20 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("zebra", false)
         set(v) = put("zebra", v)
 
+    /** Snap focus distance in metres; -1 for autofocus, 0 for infinity. */
+    var snap: Float
+        get() = sp.getFloat("snap", -1f)
+        set(v) = put("snap", v)
+
+    var night: Boolean
+        get() = sp.getBoolean("night", false)
+        set(v) = put("night", v)
+
+    /** The frames of the last developed roll, for its contact sheet. */
+    var lastRoll: List<String>
+        get() = str("lastRoll", "").split('\n').filter { it.isNotBlank() }
+        set(v) = put("lastRoll", v.joinToString("\n"))
+
     /** Roll size: 0 when no roll is loaded, otherwise 24 or 36. */
     var rollSize: Int
         get() = sp.getInt("rollSize", 0)

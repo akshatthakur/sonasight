@@ -60,6 +60,27 @@ object Imaging {
         return bmp
     }
 
+    /**
+     * Rotates by [degrees] (positive is clockwise) and crops to the largest centred rectangle
+     * of the original shape that has no empty corners.
+     */
+    fun straighten(src: Bitmap, degrees: Float): Bitmap {
+        if (kotlin.math.abs(degrees) < 0.05f) return src
+        val w = src.width.toFloat()
+        val h = src.height.toFloat()
+        val t = Math.toRadians(kotlin.math.abs(degrees).toDouble())
+        val cos = kotlin.math.cos(t).toFloat()
+        val sin = kotlin.math.sin(t).toFloat()
+        val c = minOf(w / (w * cos + h * sin), h / (w * sin + h * cos))
+        val m = android.graphics.Matrix().apply { postRotate(degrees) }
+        val rotated = Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+        val cw = (w * c).roundToInt().coerceIn(1, rotated.width)
+        val ch = (h * c).roundToInt().coerceIn(1, rotated.height)
+        val out = Bitmap.createBitmap(rotated, (rotated.width - cw) / 2, (rotated.height - ch) / 2, cw, ch)
+        if (out !== rotated) rotated.recycle()
+        return out
+    }
+
     /** Decodes an image upright, no larger than [maxSide] on its long side. */
     fun decode(context: Context, uri: Uri, maxSide: Int): Bitmap {
         val source = ImageDecoder.createSource(context.contentResolver, uri)

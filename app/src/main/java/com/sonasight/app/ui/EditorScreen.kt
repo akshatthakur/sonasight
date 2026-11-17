@@ -129,7 +129,10 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
     var recipeName by remember { mutableStateOf("") }
 
     // photo state
+    var original by remember { mutableStateOf<Bitmap?>(null) }
     var source by remember { mutableStateOf<Bitmap?>(null) }
+    var straight by remember { mutableFloatStateOf(0f) }
+    var savedLevel by remember { mutableStateOf<Float?>(null) }
     var developed by remember { mutableStateOf<Bitmap?>(null) }
     // video state
     var mediaW by remember { mutableIntStateOf(0) }
@@ -155,9 +158,18 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
         if (!isVideo) {
             val bmp = withContext(Dispatchers.IO) { runCatching { Imaging.decode(context, uri, 1600) }.getOrNull() }
             if (bmp == null) { say("COULDN'T OPEN"); return@LaunchedEffect }
-            source = Imaging.fitForGl(bmp, processor.maxTextureSize)
-            mediaW = bmp.width; mediaH = bmp.height
+            original = Imaging.fitForGl(bmp, processor.maxTextureSize)
+            savedLevel = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openInputStream(uri)?.use { Media.savedStraighten(ExifInterface(it)) } }.getOrNull()
+            }
         }
+    }
+    // straightening makes a new source; the frame size follows it
+    LaunchedEffect(original, straight) {
+        val o = original ?: return@LaunchedEffect
+        val st = withContext(Dispatchers.Default) { Imaging.straighten(o, straight) }
+        source = st
+        mediaW = st.width; mediaH = st.height
     }
     LaunchedEffect(source, stockId, sceneId, adjust) {
         val src = source ?: return@LaunchedEffect
@@ -224,11 +236,16 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
         progress = 0
         if (!isVideo) {
             val l = look
-            val c = crop; val po = portrait; val pa = pan
+            val c = crop; val po = portrait; val pa = pan; val tilt = straight
             scope.launch {
                 val uriOut = withContext(Dispatchers.IO) {
                     runCatching {
                         var full = Imaging.decode(context, uri, processor.maxTextureSize)
+                        if (tilt != 0f) {
+                            val st = Imaging.straighten(full, tilt)
+                            if (st !== full) full.recycle()
+                            full = st
+                        }
                         full = Imaging.cropToAspect(full, c?.ratio, po, pa)
                         full = Imaging.fitForGl(full, processor.maxTextureSize)
                         val out = processor.renderStill(full, l)
@@ -416,6 +433,17 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                             }
                             if (overlay == Overlay.SPIRAL || overlay == Overlay.TRIANGLES) {
                                 TextKey("TURN") { turn = (turn + 1) % 4 }
+                            }
+                        }
+                        if (!isVideo) {
+                            FineSlider("STRAIGHTEN", straight, -10f..10f, 0f, { signed(it, 1) + "°" }) { straight = it }
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp)) {
+                                val saved = savedLevel
+                                if (saved != null) {
+                                    TextKey("AUTO LEVEL", active = kotlin.math.abs(straight - saved) < 0.05f) {
+                                        straight = saved.coerceIn(-10f, 10f)
+                                    }
+                                }
                             }
                         }
                         Spacer(Modifier.weight(1f))

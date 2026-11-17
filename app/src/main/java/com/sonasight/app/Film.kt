@@ -36,9 +36,12 @@ data class FilmStock(
 enum class Overlay(val label: String) { NONE("OFF"), PHI("PHI"), SPIRAL("SPIRAL"), TRIANGLES("TRI") }
 
 enum class Aspect(val label: String, val long: Int, val short: Int) {
-    R3_2("3:2", 3, 2), R4_3("4:3", 4, 3), R1_1("1:1", 1, 1), R16_9("16:9", 16, 9), XPAN("65:24", 65, 24);
+    R3_2("3:2", 3, 2), R4_3("4:3", 4, 3), R5_4("5:4", 5, 4), R1_1("1:1", 1, 1), R16_9("16:9", 16, 9), XPAN("65:24", 65, 24);
 
     val ratio: Float get() = long.toFloat() / short
+
+    /** Written the way the phone is held: 4:5 and 9:16 upright, 5:4 and 16:9 sideways. */
+    fun label(upright: Boolean) = if (long == short) "1:1" else if (upright) "$short:$long" else "$long:$short"
 }
 
 data class Scene(

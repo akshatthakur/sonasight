@@ -1,10 +1,12 @@
 package com.sonasight.app
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -37,7 +39,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         prefs = Prefs(this)
         rig = CameraRig(this, this, FilmProcessor())
-        readShortcut(intent)
+        readLaunch(intent)
 
         setContent {
             var granted by remember { mutableStateOf(has(Manifest.permission.CAMERA)) }
@@ -50,7 +52,10 @@ class MainActivity : ComponentActivity() {
                     BackHandler { editing.value = null }
                     EditorScreen(edit, rig.processor, prefs) { editing.value = null }
                 }
-                granted -> CameraScreen(rig, prefs, shutterPresses, requestedMode) { editing.value = it }
+                granted -> CameraScreen(
+                    rig, prefs, shutterPresses, requestedMode,
+                    unlocked = ::whenUnlocked,
+                ) { uri -> whenUnlocked { editing.value = uri } }
                 else -> PermissionScreen {
                     launcher.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
                 }
@@ -60,16 +65,50 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (readShortcut(intent)) editing.value = null
+        setIntent(intent)
+        if (readLaunch(intent)) editing.value = null
     }
 
-    /** The launcher shortcuts open straight into stills or motion. */
-    private fun readShortcut(intent: Intent?): Boolean {
-        val m = intent?.getStringExtra("mode") ?: return false
-        val mode = runCatching { Mode.valueOf(m) }.getOrNull() ?: return false
+    /**
+     * Works out how we were opened: a launcher shortcut, the system camera button or the
+     * lock screen. Opened while locked, the camera shows over the lock screen.
+     */
+    private fun readLaunch(intent: Intent?): Boolean {
+        if (intent == null) return false
+        var mode: Mode? = intent.getStringExtra("mode")?.let { runCatching { Mode.valueOf(it) }.getOrNull() }
+        when (intent.action) {
+            MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA, MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE -> mode = Mode.PHOTO
+            MediaStore.INTENT_ACTION_VIDEO_CAMERA -> mode = Mode.VIDEO
+        }
+        val overLock = intent.action == MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE ||
+            intent.getBooleanExtra(EXTRA_LOCKED, false)
+        if (overLock) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
+        if (mode == null) return false
         prefs.mode = mode
         requestedMode.value = mode
         return true
+    }
+
+    private val keyguard get() = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
+
+    /**
+     * Runs [action] right away when the phone is unlocked. Over the lock screen it asks for the
+     * unlock first, so nobody can browse the gallery from a locked phone.
+     */
+    fun whenUnlocked(action: () -> Unit) {
+        if (!keyguard.isKeyguardLocked) {
+            action()
+            return
+        }
+        keyguard.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissSucceeded() {
+                setShowWhenLocked(false)
+                action()
+            }
+        })
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -85,5 +124,9 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         rig.shutdown()
         super.onDestroy()
+    }
+
+    companion object {
+        const val EXTRA_LOCKED = "locked"
     }
 }

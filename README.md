@@ -22,6 +22,11 @@ to update, open the same link and install again.
 
 to open straight into stills or motion, press and hold the SonaSight icon and pick one.
 
+to open it from the lock screen, add the SonaSight tile to your quick settings (pull down
+twice, tap the pencil, drag it in). you can also pick SonaSight as your phone's camera app if
+your phone asks which one to use. on the lock screen you can shoot, but opening the editor or
+your gallery asks you to unlock first.
+
 ## scenes
 
 the dial along the bottom has a scene for most things you'd shoot. picking one sets the film,
@@ -96,14 +101,17 @@ words in caps are the labels in the app.
 | **PHI / SPIRAL / TRI / OFF** | the framing guide. PHI splits the frame at the golden ratio, SPIRAL draws a golden spiral, and TRI draws golden triangles. tap to go to the next one. |
 | **TURN** | moves the spiral to another corner, or flips the triangles. |
 | **LEVEL** | a horizon line that turns gold, with a small tick you can feel, when the camera is straight. |
+| **AF / 1M / 2M / 5M / ∞** | snap focus. pick a distance and focus stays there, so there's no wait for autofocus when you press the shutter. 2M is a good default for street photos. tapping the viewfinder then only sets the brightness. on phones that can't set focus by hand, this key doesn't show. |
 | **TUNE** | sliders on top of the film: strength, warmth, grain, glow and vignette. SAVE AS RECIPE keeps the film and sliders together under a name, and your recipes show up at the top of the film list. long-press a recipe there to delete it. |
-| **3:2** | the frame shape for stills: 3:2, 4:3, 1:1, 16:9 or 65:24. video is always 16:9. |
+| **3:2** | the frame shape for stills. it's written the way you're holding the phone, so upright you get 2:3, 3:4, 4:5, 1:1, 9:16 and 24:65. 4:5 fits an Instagram post and 9:16 a story. video is always 16:9, or 9:16 upright. |
 | **24 / 28 / 35 / 50** | the lens, as a 35mm equivalent. if your phone has an ultra-wide, a wider number shows up first. pinch the viewfinder to zoom anywhere in between. |
 | **exposure ruler** | drag it left or right to make the picture brighter or darker, from -2 to +2 in thirds. |
 | **TIMER** | 3 or 10 seconds before the shot. press the shutter again to cancel. |
 | **TORCH** | turns the light on for dark places. |
-| **FLIP** | switches to the front camera. |
-| **•••** | date stamp, roll, location, highlight warning, and editing something from your gallery. |
+| **NIGHT** | takes 6 pictures in a row, lines them up and blends them into one cleaner picture. hold the phone as still as you can until it says STACKING. people walking through stay sharp in most frames, though fast movement can still leave traces. night shots come out at about 3000 pixels on the long side. |
+| **hold the shutter** | a burst: pictures keep coming until you let go, up to 12. expect a few a second, since each one is developed as it's taken. |
+| **FLIP** | under STILL and MOTION. switches to the front camera. |
+| **•••** | date stamp, roll, location, highlight warning, contact sheets, and editing something from your gallery. |
 | **volume keys** | take a picture, or start and stop a video. |
 | **STILL / MOTION** | photos or video. |
 | **tap the viewfinder** | focuses there. |
@@ -119,6 +127,9 @@ photos are saved to `Pictures/SonaSight` and videos to `Movies/SonaSight`.
   early.
 - **location** saves where each photo and video was taken. along with the film, scene and
   lens, it's written into the photo's details.
+- **contact sheet** puts today's photos, or the last roll you developed, on one black sheet
+  with frame numbers and each frame's film, like a sheet printed from negatives. it's saved
+  to your gallery.
 - **highlight warning** draws gold stripes over the brightest parts when they're losing
   detail. it only shows in the viewfinder, never in what you shoot.
 
@@ -132,7 +143,8 @@ stays as it was.
   picture to see the original.
 - **TUNE** has the same sliders as the camera, plus exposure.
 - **CROP** picks a frame shape, with the golden ratio guides on top. drag the picture to
-  place it.
+  place it. STRAIGHTEN rotates the picture. for photos taken with SonaSight, AUTO LEVEL
+  uses how tilted the phone was when you took it.
 - **TRIM** (videos) sets where the clip starts and ends.
 
 ## code
@@ -146,7 +158,10 @@ app/src/main/java/com/sonasight/app/
   FilmGlEffect.kt    the same shader as a video effect, for editing videos
   Film.kt            the films, MEISHO films, scenes and recipes
   Media.kt           saving, photo details, date stamp and rolls
-  Imaging.kt         cropping, scaling and decoding photos
+  Imaging.kt         cropping, straightening, scaling and decoding photos
+  NightStack.kt      lines up and blends night frames
+  ContactSheet.kt    lays photos out as a contact sheet
+  ShootTile.kt       the quick settings tile
   LocationTracker.kt where you are, when location is on
   Prefs.kt           remembers your settings
   ui/CameraScreen.kt the camera screen and its controls
