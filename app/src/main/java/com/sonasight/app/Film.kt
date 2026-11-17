@@ -26,6 +26,7 @@ data class FilmStock(
     val vignette: Float = 0.2f,
     val mono: Boolean = false,
     val monoFilter: FloatArray = floatArrayOf(0.2126f, 0.7152f, 0.0722f),
+    val category: String = "FILM",
 ) {
     companion object {
         val IDENTITY = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
@@ -133,6 +134,101 @@ object Films {
         ),
     )
 
+    /**
+     * MEISHO: looks named after places in Japan, each tuned to what that place is known for.
+     * The badge is the place name in kanji instead of an ISO number.
+     */
+    val meisho = listOf(
+        FilmStock(
+            "shibuya", "SHIBUYA", "渋谷", "Night crossings and glass towers. Teal shadows, warm signs, crisp edges.",
+            contrast = 0.42f, saturation = 1.0f, fade = 0.02f,
+            shadowTint = floatArrayOf(-0.01f, 0.015f, 0.035f), highlightTint = floatArrayOf(0.03f, 0.01f, -0.01f),
+            warmth = -0.3f, greenShift = 0.04f, warmSat = 0.12f,
+            grain = 0.45f, grainSize = 1.6f, halation = 0.55f, vignette = 0.25f, category = "MEISHO",
+        ),
+        FilmStock(
+            "shinjuku", "SHINJUKU", "新宿", "Neon in the rain. Electric blues against hot reds.",
+            contrast = 0.38f, saturation = 1.15f, fade = 0.03f,
+            shadowTint = floatArrayOf(0f, 0f, 0.045f), highlightTint = floatArrayOf(0.035f, 0f, 0.02f),
+            warmth = -0.45f, tint = 0.12f,
+            mixer = floatArrayOf(1.05f, -0.03f, -0.02f, -0.02f, 1.0f, 0.02f, 0f, -0.02f, 1.02f),
+            warmSat = 0.15f, blueSat = 0.2f,
+            grain = 0.55f, grainSize = 1.7f, halation = 0.7f, vignette = 0.32f, category = "MEISHO",
+        ),
+        FilmStock(
+            "asakusa", "ASAKUSA", "浅草", "Temple gates and paper lanterns. Vermilion, with cyan-green shadows.",
+            contrast = 0.4f, saturation = 0.95f, fade = 0.03f,
+            shadowTint = floatArrayOf(-0.01f, 0.015f, 0.025f), highlightTint = floatArrayOf(0.04f, 0.015f, 0f),
+            warmth = 0.2f, warmSat = 0.2f, blueSat = -0.15f,
+            grain = 0.45f, grainSize = 1.6f, halation = 0.3f, vignette = 0.3f, category = "MEISHO",
+        ),
+        FilmStock(
+            "shimokita", "SHIMOKITA", "下北", "Everyday streets. Soft, faded and a little nostalgic.",
+            contrast = 0.18f, saturation = 0.85f, fade = 0.07f,
+            shadowTint = floatArrayOf(-0.01f, 0.02f, 0.03f), highlightTint = floatArrayOf(0.025f, 0.01f, 0f),
+            warmth = 0.05f, greenShift = 0.03f,
+            grain = 0.5f, grainSize = 1.7f, halation = 0.08f, vignette = 0.2f, category = "MEISHO",
+        ),
+        FilmStock(
+            "kyoto", "KYOTO", "京都", "Forests and temples. Deep emerald, maple red, quiet shadows.",
+            contrast = 0.38f, saturation = 1.15f,
+            shadowTint = floatArrayOf(-0.005f, 0.012f, 0.012f), highlightTint = floatArrayOf(0.02f, 0.012f, 0f),
+            warmth = 0.08f, greenShift = 0.02f, warmSat = 0.18f, blueSat = 0.05f,
+            grain = 0.25f, grainSize = 1.3f, halation = 0.05f, vignette = 0.26f, category = "MEISHO",
+        ),
+        FilmStock(
+            "osaka", "OSAKA", "大阪", "Neon and canal reflections. Loud, warm and saturated.",
+            contrast = 0.45f, saturation = 1.2f, fade = 0.01f,
+            shadowTint = floatArrayOf(-0.015f, 0.01f, 0.04f), highlightTint = floatArrayOf(0.045f, 0.02f, -0.02f),
+            warmth = -0.15f, warmSat = 0.25f, blueSat = 0.15f,
+            grain = 0.4f, grainSize = 1.6f, halation = 0.6f, vignette = 0.28f, category = "MEISHO",
+        ),
+        FilmStock(
+            "nara", "NARA", "奈良", "Parks, deer and morning light. Soft and warm.",
+            contrast = 0.15f, saturation = 0.92f, fade = 0.04f,
+            shadowTint = floatArrayOf(0f, 0.005f, 0.01f), highlightTint = floatArrayOf(0.03f, 0.02f, 0f),
+            warmth = 0.18f, greenShift = -0.01f, warmSat = -0.03f,
+            grain = 0.3f, grainSize = 1.4f, halation = 0.15f, vignette = 0.2f, category = "MEISHO",
+        ),
+        FilmStock(
+            "kamakura", "KAMAKURA", "鎌倉", "Sea, shrines and grey skies. Muted and calm.",
+            contrast = 0.3f, saturation = 0.78f, fade = 0.03f,
+            shadowTint = floatArrayOf(0f, 0.01f, 0.02f), highlightTint = floatArrayOf(0.015f, 0.01f, 0.005f),
+            warmth = -0.05f, greenShift = 0.03f, blueSat = -0.05f,
+            grain = 0.38f, grainSize = 1.5f, halation = 0.04f, vignette = 0.22f, category = "MEISHO",
+        ),
+        FilmStock(
+            "atami", "ATAMI", "熱海", "Old onsen town by a hazy sea. Faded amber, like a postcard.",
+            contrast = 0.1f, saturation = 0.9f, fade = 0.08f,
+            shadowTint = floatArrayOf(0.01f, 0.005f, 0f), highlightTint = floatArrayOf(0.04f, 0.025f, 0f),
+            warmth = 0.25f, blueSat = -0.1f,
+            grain = 0.45f, grainSize = 1.6f, halation = 0.3f, vignette = 0.3f, category = "MEISHO",
+        ),
+        FilmStock(
+            "hakone", "HAKONE", "箱根", "Mist and mountains. Muted greens, a cool blue air.",
+            contrast = 0.05f, saturation = 0.82f, fade = 0.06f,
+            shadowTint = floatArrayOf(-0.005f, 0.01f, 0.025f), highlightTint = floatArrayOf(0.01f, 0.012f, 0.015f),
+            warmth = -0.12f, greenShift = 0.02f, warmSat = 0.1f,
+            grain = 0.3f, grainSize = 1.4f, halation = 0.06f, vignette = 0.18f, category = "MEISHO",
+        ),
+        FilmStock(
+            "otaru", "OTARU", "小樽", "Snow, canals and gas lamps. Silver light, warm brick.",
+            contrast = 0.3f, saturation = 0.9f,
+            shadowTint = floatArrayOf(0f, 0.01f, 0.03f), highlightTint = floatArrayOf(0f, 0.005f, 0.01f),
+            warmth = -0.2f, warmSat = 0.2f,
+            grain = 0.25f, grainSize = 1.3f, halation = 0.25f, vignette = 0.2f, category = "MEISHO",
+        ),
+        FilmStock(
+            "kanazawa", "KANAZAWA", "金沢", "Gardens, old streets and gold leaf. Rich, moss and gilt.",
+            contrast = 0.4f, saturation = 1.0f, fade = 0.01f,
+            shadowTint = floatArrayOf(0f, 0.008f, 0.012f), highlightTint = floatArrayOf(0.035f, 0.025f, 0f),
+            warmth = 0.12f, greenShift = -0.01f, warmSat = 0.1f,
+            grain = 0.3f, grainSize = 1.4f, halation = 0.1f, vignette = 0.3f, category = "MEISHO",
+        ),
+    )
+
+    val all = stocks + meisho
+
     val scenes = listOf(
         Scene("streets", "STREETS", "ledger", lens = 28, overlay = Overlay.PHI, grainMul = 1.1f),
         Scene("temples", "TEMPLES", "amber", lens = 35, overlay = Overlay.SPIRAL, contrast = 0.05f, vignette = 0.1f),
@@ -149,9 +245,36 @@ object Films {
         Scene("vista", "VISTA", "meridian", lens = 28, overlay = Overlay.PHI, aspect = Aspect.XPAN),
     )
 
-    fun stock(id: String) = stocks.firstOrNull { it.id == id } ?: stocks.first()
+    fun stock(id: String) = all.firstOrNull { it.id == id } ?: stocks.first()
     fun scene(id: String) = scenes.firstOrNull { it.id == id } ?: scenes.first()
 }
+
+/** Hand adjustments on top of a film. Also what a recipe stores. */
+data class Adjust(
+    val strength: Float = 1f,   // 0 = original, 1 = full film look
+    val exposure: Float = 0f,   // stops, applied in the shader
+    val warmth: Float = 0f,
+    val grain: Float = 1f,      // multiplier
+    val glow: Float = 0f,       // added halation
+    val vignette: Float = 0f,   // added vignette
+) {
+    fun toJson(): org.json.JSONObject = org.json.JSONObject()
+        .put("strength", strength.toDouble()).put("exposure", exposure.toDouble())
+        .put("warmth", warmth.toDouble()).put("grain", grain.toDouble())
+        .put("glow", glow.toDouble()).put("vignette", vignette.toDouble())
+
+    companion object {
+        val NONE = Adjust()
+        fun fromJson(o: org.json.JSONObject?) = if (o == null) NONE else Adjust(
+            o.optDouble("strength", 1.0).toFloat(), o.optDouble("exposure", 0.0).toFloat(),
+            o.optDouble("warmth", 0.0).toFloat(), o.optDouble("grain", 1.0).toFloat(),
+            o.optDouble("glow", 0.0).toFloat(), o.optDouble("vignette", 0.0).toFloat(),
+        )
+    }
+}
+
+/** A named, saved combination of a film and adjustments. */
+data class Recipe(val id: String, val name: String, val stockId: String, val adjust: Adjust)
 
 /** Flattened parameters the GL shader reads every frame. */
 class Look(
@@ -170,10 +293,13 @@ class Look(
     val vignette: Float,
     val mono: Boolean,
     val monoFilter: FloatArray,
+    val strength: Float = 1f,
+    val exposure: Float = 0f,
 ) {
     companion object {
-        fun of(stock: FilmStock, scene: Scene?, grainOn: Boolean = true): Look {
+        fun of(stock: FilmStock, scene: Scene?, adjust: Adjust = Adjust.NONE): Look {
             val s = scene
+            val a = adjust
             val m = stock.mixer
             // GL wants column-major; our mixer is written row-major
             val cm = floatArrayOf(m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8])
@@ -183,16 +309,18 @@ class Look(
                 fade = stock.fade,
                 shadowTint = stock.shadowTint,
                 highlightTint = stock.highlightTint,
-                warmth = stock.warmth + (s?.warmth ?: 0f),
+                warmth = stock.warmth + (s?.warmth ?: 0f) + a.warmth,
                 tint = stock.tint,
                 mixerColumnMajor = cm,
                 hue = floatArrayOf(stock.greenShift, stock.warmSat, stock.blueSat),
-                grain = if (grainOn) stock.grain * (s?.grainMul ?: 1f) else 0f,
+                grain = stock.grain * (s?.grainMul ?: 1f) * a.grain,
                 grainSize = stock.grainSize,
-                halation = (stock.halation + (s?.halation ?: 0f)).coerceIn(0f, 1.5f),
-                vignette = (stock.vignette + (s?.vignette ?: 0f)).coerceIn(0f, 1f),
+                halation = (stock.halation + (s?.halation ?: 0f) + a.glow).coerceIn(0f, 2f),
+                vignette = (stock.vignette + (s?.vignette ?: 0f) + a.vignette).coerceIn(0f, 1f),
                 mono = stock.mono,
                 monoFilter = stock.monoFilter,
+                strength = a.strength.coerceIn(0f, 1f),
+                exposure = a.exposure,
             )
         }
 

@@ -38,6 +38,8 @@ class FilmProcessor : SurfaceProcessor {
     val executor: Executor = Executor { handler.post(it) }
 
     @Volatile var look: Look = Look.DEFAULT
+    /** Gold stripes on clipped highlights. Only drawn to viewfinder-only outputs, never recorded. */
+    @Volatile var zebra: Boolean = false
     @Volatile var maxTextureSize: Int = 4096
         private set
 
@@ -176,7 +178,8 @@ class FilmProcessor : SurfaceProcessor {
             val size = out.size
             GLES20.glViewport(0, 0, size.width, size.height)
             val scale = minOf(size.width, size.height) / 1080f
-            program.draw(inputTex, outMatrix, l, inputAspect, scale.coerceAtLeast(0.6f), seed)
+            val previewOnly = out.targets == CameraEffect.PREVIEW
+            program.draw(inputTex, outMatrix, l, inputAspect, scale.coerceAtLeast(0.6f), seed, zebra && previewOnly)
             EGLExt.eglPresentationTimeANDROID(display, egl, st.timestamp)
             EGL14.eglSwapBuffers(display, egl)
         }

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="still"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_still"
+        android:shortcutShortLabel="@string/shortcut_still">
+        <intent
+            android:action="com.sonasight.app.SHOOT"
+            android:targetPackage="com.sonasight.app"
+            android:targetClass="com.sonasight.app.MainActivity">
+            <extra android:name="mode" android:value="PHOTO" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="motion"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_motion"
+        android:shortcutShortLabel="@string/shortcut_motion">
+        <intent
+            android:action="com.sonasight.app.SHOOT"
+            android:targetPackage="com.sonasight.app"
+            android:targetClass="com.sonasight.app.MainActivity">
+            <extra android:name="mode" android:value="VIDEO" />
+        </intent>
+    </shortcut>
+</shortcuts>

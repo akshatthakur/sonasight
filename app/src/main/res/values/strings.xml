@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">SonaSight</string>
+    <string name="shortcut_still">Shoot a still</string>
+    <string name="shortcut_motion">Shoot motion</string>
 </resources>

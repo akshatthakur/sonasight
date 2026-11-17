@@ -126,12 +126,40 @@ class CameraRig(
         }
 
         val selector = if (front && hasFront) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        camera?.cameraInfo?.zoomState?.removeObservers(owner)
         camera = try {
             p.bindToLifecycle(owner, selector, group.build())
         } catch (e: Exception) {
             Log.e(TAG, "bind failed", e)
             null
         }
+        camera?.cameraInfo?.zoomState?.observe(owner) { z ->
+            onZoom?.invoke(z.zoomRatio, z.minZoomRatio, z.maxZoomRatio)
+        }
+    }
+
+    /** Called with (ratio, min, max) whenever the zoom changes. */
+    var onZoom: ((Float, Float, Float) -> Unit)? = null
+
+    val hasTorch: Boolean get() = camera?.cameraInfo?.hasFlashUnit() == true
+
+    fun setTorch(on: Boolean) {
+        camera?.cameraControl?.enableTorch(on && hasTorch)
+    }
+
+    fun setZoomRatio(ratio: Float) {
+        val cam = camera ?: return
+        val z = cam.cameraInfo.zoomState.value ?: return
+        cam.cameraControl.setZoomRatio(ratio.coerceIn(z.minZoomRatio, z.maxZoomRatio))
+    }
+
+    fun zoomRatio(): Float = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
+
+    fun unbind() {
+        recording?.stop()
+        camera?.cameraInfo?.zoomState?.removeObservers(owner)
+        provider?.unbindAll()
+        camera = null
     }
 
     fun setRotation(r: Int) {
@@ -173,106 +201,73 @@ class CameraRig(
 
     // ---- Photo ----
 
-    fun takePhoto(look: Look, aspect: Aspect, front: Boolean, done: (Uri?, Bitmap?) -> Unit) {
-        val ic = imageCapture ?: return done(null, null)
+    /**
+     * Takes a photo, develops it through the film look and saves it.
+     * With [toRoll] the frame goes into the private roll folder instead of the gallery.
+     * [done] gets the saved uri (null for roll frames or failures) and a small thumbnail.
+     */
+    fun takePhoto(
+        look: Look,
+        aspect: Aspect,
+        front: Boolean,
+        dateStamp: Boolean,
+        info: ShotInfo,
+        toRoll: Boolean,
+        done: (ok: Boolean, uri: Uri?, thumb: Bitmap?) -> Unit,
+    ) {
+        val ic = imageCapture ?: return done(false, null, null)
         sound.play(MediaActionSound.SHUTTER_CLICK)
         ic.takePicture(work, object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
-                val result = try {
-                    develop(image, look, aspect, front)
+                var ok = false
+                var uri: Uri? = null
+                var thumb: Bitmap? = null
+                try {
+                    val developed = develop(image, look, aspect, front)
+                    image.close()
+                    if (dateStamp) Media.drawDate(developed, info.taken)
+                    val file = if (toRoll) Media.writeJpeg(context, developed, info, Media.rollDir(context))
+                    else Media.writeJpeg(context, developed, info)
+                    if (!toRoll) uri = Media.publishImage(context, file)
+                    val th = 240
+                    thumb = Bitmap.createScaledBitmap(
+                        developed, (developed.width * th / developed.height.toFloat()).toInt().coerceAtLeast(1), th, true,
+                    )
+                    developed.recycle()
+                    ok = toRoll || uri != null
                 } catch (e: Throwable) {
                     Log.e(TAG, "develop failed", e)
-                    null
-                } finally {
-                    image.close()
+                    runCatching { image.close() }
                 }
-                main.post { done(result?.first, result?.second) }
+                main.post { done(ok, uri, thumb) }
             }
 
             override fun onError(exception: ImageCaptureException) {
                 Log.e(TAG, "capture failed", exception)
-                main.post { done(null, null) }
+                main.post { done(false, null, null) }
             }
         })
     }
 
-    private fun develop(image: ImageProxy, look: Look, aspect: Aspect, front: Boolean): Pair<Uri?, Bitmap> {
+    private fun develop(image: ImageProxy, look: Look, aspect: Aspect, front: Boolean): Bitmap {
         val raw = image.toBitmap()
         val m = Matrix()
         m.postRotate(image.imageInfo.rotationDegrees.toFloat())
         if (front) m.postScale(-1f, 1f)
         var bmp = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
         if (bmp !== raw) raw.recycle()
-
-        bmp = crop(bmp, aspect)
-
-        val max = processor.maxTextureSize
-        if (bmp.width > max || bmp.height > max) {
-            val s = max.toFloat() / maxOf(bmp.width, bmp.height)
-            val scaled = Bitmap.createScaledBitmap(bmp, (bmp.width * s).toInt(), (bmp.height * s).toInt(), true)
-            bmp.recycle()
-            bmp = scaled
-        }
-        if (bmp.config != Bitmap.Config.ARGB_8888) {
-            val c = bmp.copy(Bitmap.Config.ARGB_8888, false)
-            bmp.recycle()
-            bmp = c
-        }
-
+        bmp = Imaging.cropToAspect(bmp, aspect.ratio, null, 0f)
+        bmp = Imaging.fitForGl(bmp, processor.maxTextureSize)
         val developed = processor.renderStill(bmp, look)
         bmp.recycle()
-
-        val uri = saveJpeg(developed)
-        val thumbH = 240
-        val thumb = Bitmap.createScaledBitmap(
-            developed, (developed.width * thumbH / developed.height.toFloat()).toInt().coerceAtLeast(1), thumbH, true,
-        )
-        developed.recycle()
-        return uri to thumb
-    }
-
-    /** Crops to the chosen ratio, keeping the long side of the ratio on the long side of the image. */
-    private fun crop(src: Bitmap, aspect: Aspect): Bitmap {
-        val landscape = src.width >= src.height
-        val target = aspect.ratio
-        val w = src.width
-        val h = src.height
-        val cur = if (landscape) w.toFloat() / h else h.toFloat() / w
-        if (kotlin.math.abs(cur - target) < 0.01f) return src
-        var cw = w
-        var ch = h
-        if (landscape) {
-            if (cur > target) cw = (h * target).roundToInt() else ch = (w / target).roundToInt()
-        } else {
-            if (cur > target) ch = (w * target).roundToInt() else cw = (h / target).roundToInt()
-        }
-        val out = Bitmap.createBitmap(src, (w - cw) / 2, (h - ch) / 2, cw, ch)
-        if (out !== src) src.recycle()
-        return out
-    }
-
-    private fun saveJpeg(bmp: Bitmap): Uri? {
-        val name = "SONA_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/SonaSight")
-            put(MediaStore.Images.Media.IS_PENDING, 1)
-        }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
-        resolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
-        values.clear()
-        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        return uri
+        return developed
     }
 
     // ---- Video ----
 
     val isRecording: Boolean get() = recording != null
 
-    fun startRecording(onTick: (Long) -> Unit, onSaved: (Uri?) -> Unit) {
+    fun startRecording(location: android.location.Location?, onTick: (Long) -> Unit, onSaved: (Uri?) -> Unit) {
         val vc = videoCapture ?: return
         val name = "SONA_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val values = ContentValues().apply {
@@ -282,7 +277,7 @@ class CameraRig(
         }
         val options = MediaStoreOutputOptions.Builder(
             context.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-        ).setContentValues(values).build()
+        ).setContentValues(values).apply { if (location != null) setLocation(location) }.build()
 
         var pending = vc.output.prepareRecording(context, options)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {

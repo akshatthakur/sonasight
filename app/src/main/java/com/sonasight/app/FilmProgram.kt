@@ -31,6 +31,9 @@ class FilmProgram(private val external: Boolean) {
     private val uMono: Int
     private val uSeed: Int
     private val uTexAspect: Int
+    private val uStrength: Int
+    private val uExposure: Int
+    private val uZebra: Int
 
     private val quad: FloatBuffer = floatBuffer(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
     private val uvs: FloatBuffer = floatBuffer(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
@@ -56,6 +59,9 @@ class FilmProgram(private val external: Boolean) {
         uMono = loc("uMono")
         uSeed = loc("uSeed")
         uTexAspect = loc("uTexAspect")
+        uStrength = loc("uStrength")
+        uExposure = loc("uExposure")
+        uZebra = loc("uZebra")
     }
 
     /**
@@ -69,8 +75,10 @@ class FilmProgram(private val external: Boolean) {
         texAspect: Float,
         grainScale: Float,
         seed: Float,
+        zebra: Boolean = false,
     ) {
         GLES20.glUseProgram(program)
+        GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(if (external) GLES11Ext.GL_TEXTURE_EXTERNAL_OES else GLES20.GL_TEXTURE_2D, tex)
         GLES20.glUniform1i(uTex, 0)
@@ -93,6 +101,9 @@ class FilmProgram(private val external: Boolean) {
         )
         GLES20.glUniform1f(uSeed, seed)
         GLES20.glUniform1f(uTexAspect, texAspect)
+        GLES20.glUniform1f(uStrength, look.strength)
+        GLES20.glUniform1f(uExposure, look.exposure)
+        GLES20.glUniform1f(uZebra, if (zebra) 1f else 0f)
 
         GLES20.glEnableVertexAttribArray(aPos)
         GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
@@ -155,6 +166,9 @@ uniform float uVignette;
 uniform vec4 uMono;      // on, filter rgb
 uniform float uSeed;
 uniform float uTexAspect;
+uniform float uStrength;
+uniform float uExposure;
+uniform float uZebra;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
@@ -182,7 +196,10 @@ float hash(vec2 p) {
 float bright(vec3 s) { return max(luma(s) - 0.70, 0.0); }
 
 void main() {
-    vec3 c = texture2D(uTex, vUv).rgb;
+    vec3 raw = texture2D(uTex, vUv).rgb;
+    float gain = exp2(uExposure);
+    vec3 c = raw * gain;
+    vec3 src = clamp(c, 0.0, 1.0);
 
     // halation: light bleeding back through the film base, tinted red-orange
     if (uHalo.x > 0.001) {
@@ -191,8 +208,8 @@ void main() {
         for (int i = 0; i < 10; i++) {
             float a = float(i) * 0.6283185;
             vec2 o = vec2(cos(a), sin(a)) * r;
-            vec3 s1 = texture2D(uTex, vUv + o).rgb;
-            vec3 s2 = texture2D(uTex, vUv + o * 2.4).rgb;
+            vec3 s1 = texture2D(uTex, vUv + o).rgb * gain;
+            vec3 s2 = texture2D(uTex, vUv + o * 2.4).rgb * gain;
             acc += s1 * bright(s1) + s2 * bright(s2) * 0.6;
         }
         acc /= 16.0;
@@ -242,11 +259,20 @@ void main() {
     vec2 d = vPos - 0.5;
     c *= mix(1.0, smoothstep(0.95, 0.25, length(d)), uVignette);
 
+    // how much of the look to apply
+    c = mix(src, c, uStrength);
+
     // grain, strongest in the midtones
     vec2 gp = floor(gl_FragCoord.xy / max(uGrain.y * uGrain.z, 1.0));
     float n = hash(gp + uSeed * 97.0) + hash(gp * 1.7 + uSeed * 31.0) - 1.0;
     float gy = luma(c);
-    c += n * uGrain.x * (0.25 + 3.0 * gy * (1.0 - gy)) * 0.16;
+    c += n * uGrain.x * uStrength * (0.25 + 3.0 * gy * (1.0 - gy)) * 0.16;
+
+    // highlight warning, viewfinder only: gold stripes over clipped areas
+    if (uZebra > 0.5 && max(raw.r, max(raw.g, raw.b)) > 0.985) {
+        float stripe = step(0.5, fract((gl_FragCoord.x + gl_FragCoord.y) / (16.0 * max(uGrain.z, 1.0))));
+        c = mix(c, vec3(0.79, 0.65, 0.35), stripe * 0.85);
+    }
 
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
