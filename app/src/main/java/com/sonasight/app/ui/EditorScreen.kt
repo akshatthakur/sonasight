@@ -263,6 +263,12 @@ fun EditorScreen(
         }
     }
 
+    fun pickStock(s: FilmStock) {
+        stockId = s.id; sceneId = null
+        if (recipeId.isNotEmpty()) adjust = Adjust.NONE
+        recipeId = ""
+    }
+
     fun save() {
         if (saving) return
         saving = true
