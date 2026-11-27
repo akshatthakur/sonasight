@@ -2,7 +2,7 @@ package com.sonasight.app.ui
 
 import android.graphics.Bitmap
 import android.net.Uri
-import android.view.SurfaceView
+import android.view.TextureView
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -118,12 +118,14 @@ fun EditorScreen(
     uri: Uri,
     processor: FilmProcessor,
     prefs: Prefs,
+    mimeType: String? = null,
     onSaved: ((Uri) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val isVideo = remember(uri) { context.contentResolver.getType(uri)?.startsWith("video") == true }
+    // galleries don't always say what a file is, so ask a few ways before deciding
+    val isVideo = remember(uri) { Imaging.isVideo(context, uri, mimeType) }
 
     var stockId by remember { mutableStateOf(prefs.stock) }
     var sceneId by remember { mutableStateOf<String?>(null) }
@@ -158,6 +160,7 @@ fun EditorScreen(
     var endMs by remember { mutableLongStateOf(0L) }
     var positionMs by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(true) }
+    var plainPreview by remember { mutableStateOf(false) }
 
     val stock = Films.stock(stockId)
     val scene = sceneId?.let { Films.scene(it) }
@@ -194,6 +197,17 @@ fun EditorScreen(
         developed = withContext(Dispatchers.Default) { processor.renderStill(src, l) }
     }
 
+    // ---- video: size and length up front, so the frame shows before playback starts ----
+    LaunchedEffect(uri) {
+        if (isVideo) {
+            val info = withContext(Dispatchers.IO) { Imaging.videoInfo(context, uri) }
+            if (info != null) {
+                if (mediaW == 0) { mediaW = info.first; mediaH = info.second }
+                if (durationMs == 0L && info.third > 0) { durationMs = info.third; endMs = info.third }
+            } else say("COULDN'T READ THIS VIDEO")
+        }
+    }
+
     // ---- video: a looping player with the film effect ----
     val lookRef = remember { LookRef(look) }
     lookRef.look = shown
@@ -215,6 +229,19 @@ fun EditorScreen(
                     val w = (videoSize.width * videoSize.pixelWidthHeightRatio).roundToInt()
                     mediaW = if (rotated) videoSize.height else w
                     mediaH = if (rotated) w else videoSize.height
+                }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                android.util.Log.e("SonaSight", "video preview failed", error)
+                // if the film effect is what broke, show the plain video so you can still trim and crop
+                if (p != null && !plainPreview) {
+                    plainPreview = true
+                    p.setVideoEffects(emptyList())
+                    p.prepare()
+                    say("PREVIEW WITHOUT THE LOOK  ·  ${error.errorCodeName}")
+                } else {
+                    say("VIDEO ERROR  ·  ${error.errorCodeName}")
                 }
             }
 
@@ -380,7 +407,7 @@ fun EditorScreen(
                     ) {
                         if (player != null) {
                             AndroidView(
-                                factory = { ctx -> SurfaceView(ctx).also { player.setVideoSurfaceView(it) } },
+                                factory = { ctx -> TextureView(ctx).also { player.setVideoTextureView(it) } },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {

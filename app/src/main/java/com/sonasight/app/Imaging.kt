@@ -93,6 +93,34 @@ object Imaging {
         return out
     }
 
+    /** Whether [uri] is a video, going by the type we were given, the provider, then the file itself. */
+    fun isVideo(context: Context, uri: Uri, hint: String?): Boolean {
+        if (hint != null && hint != "*/*") return hint.startsWith("video")
+        context.contentResolver.getType(uri)?.let { return it.startsWith("video") }
+        val name = uri.lastPathSegment?.lowercase() ?: ""
+        if (listOf(".mp4", ".mov", ".3gp", ".mkv", ".webm").any { name.endsWith(it) }) return true
+        return runCatching {
+            val r = android.media.MediaMetadataRetriever()
+            try {
+                r.setDataSource(context, uri)
+                r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes"
+            } finally { r.release() }
+        }.getOrDefault(false)
+    }
+
+    /** Display width, display height (rotation applied) and length in ms of a video, or null. */
+    fun videoInfo(context: Context, uri: Uri): Triple<Int, Int, Long>? = runCatching {
+        val r = android.media.MediaMetadataRetriever()
+        try {
+            r.setDataSource(context, uri)
+            val w = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            val h = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            val rot = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            if (w <= 0 || h <= 0) null else if (rot % 180 != 0) Triple(h, w, ms) else Triple(w, h, ms)
+        } finally { r.release() }
+    }.getOrNull()
+
     /** Decodes an image upright, no larger than [maxSide] on its long side. */
     fun decode(context: Context, uri: Uri, maxSide: Int): Bitmap {
         val source = ImageDecoder.createSource(context.contentResolver, uri)

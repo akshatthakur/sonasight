@@ -33,6 +33,7 @@ class EditActivity : ComponentActivity() {
                 uri = uri,
                 processor = p,
                 prefs = prefs,
+                mimeType = intent.type,
                 onSaved = { saved ->
                     setResult(RESULT_OK, Intent().setData(saved).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
                     finish()
