@@ -377,9 +377,9 @@ fun EditorScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 if (mediaW > 0 && mediaH > 0) {
-                    val ratio = mediaW.toFloat() / mediaH
+                    val picRatio = mediaW.toFloat() / mediaH
                     Box(
-                        Modifier.aspectRatio(ratio, matchHeightConstraintsFirst = maxWidth / maxHeight > ratio)
+                        Modifier.aspectRatio(picRatio, matchHeightConstraintsFirst = maxWidth / maxHeight > picRatio)
                             .pointerInput(tab) {
                                 if (tab == Tab.CROP) {
                                     // corners resize, edges resize when free, inside moves, two fingers zoom
