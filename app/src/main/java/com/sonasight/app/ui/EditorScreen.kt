@@ -8,7 +8,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -99,12 +106,25 @@ private enum class Tab(val label: String, val jp: String) {
     FILM("FILM", "フィルム"), TUNE("TUNE", "調整"), CROP("CROP", "切抜"), TRIM("TRIM", "尺"),
 }
 
-/** Frame shapes in the editor. null keeps the original. */
-private val CROPS: List<Aspect?> = listOf(null) + Aspect.entries
+/** Crop shapes in the editor: free, the picture's own, then the fixed ratios. */
+private val RATIOS: List<Ratio> = listOf(Ratio.Free, Ratio.Original) + Aspect.entries.map { Ratio.Fixed(it) }
+
+private fun Ratio.label() = when (this) {
+    Ratio.Free -> "FREE"
+    Ratio.Original -> "ORIGINAL"
+    is Ratio.Fixed -> aspect.label
+}
 
 @OptIn(UnstableApi::class)
 @Composable
-fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -> Unit) {
+fun EditorScreen(
+    uri: Uri,
+    processor: FilmProcessor,
+    prefs: Prefs,
+    replace: Boolean = false,
+    onSaved: ((Uri) -> Unit)? = null,
+    onClose: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isVideo = remember(uri) { context.contentResolver.getType(uri)?.startsWith("video") == true }
@@ -114,9 +134,10 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
     var recipeId by remember { mutableStateOf("") }
     var adjust by remember { mutableStateOf(Adjust.NONE) }
     var recipes by remember { mutableStateOf(prefs.recipes) }
-    var crop by remember { mutableStateOf<Aspect?>(null) }
-    var portrait by remember { mutableStateOf<Boolean?>(null) }
-    var pan by remember { mutableFloatStateOf(0f) }
+    var ratio by remember { mutableStateOf<Ratio>(Ratio.Free) }
+    var turned by remember { mutableStateOf(false) }
+    var cropBox by remember { mutableStateOf(NRect.FULL) }
+    var pendingFile by remember { mutableStateOf<File?>(null) }
     var overlay by remember { mutableStateOf(Overlay.PHI) }
     var turn by remember { mutableIntStateOf(0) }
     var tab by remember { mutableStateOf(Tab.FILM) }
@@ -222,7 +243,69 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
     }
     LaunchedEffect(stockId, sceneId, adjust, comparing) { player?.let { if (!it.isPlaying) it.seekTo(it.currentPosition) } }
 
-    fun cropRect() = Imaging.cropRect(mediaW.coerceAtLeast(1), mediaH.coerceAtLeast(1), crop?.ratio, portrait, pan)
+    fun cropTarget() = CropMath.target(ratio, mediaW.coerceAtLeast(1), mediaH.coerceAtLeast(1), turned)
+
+    // a new shape starts from the biggest crop that fits
+    LaunchedEffect(ratio, turned, mediaW > 0) {
+        if (mediaW > 0) cropBox = CropMath.fit(mediaW, mediaH, cropTarget())
+    }
+
+    fun saved(where: Uri, message: String) {
+        saving = false
+        stampKey += 1
+        say(message)
+        onSaved?.let { done -> scope.launch { delay(900); done(where) } }
+    }
+
+    /** Puts a finished file where it belongs: over the original, or as a copy in the gallery. */
+    fun copy(file: File, note: String) {
+        scope.launch {
+            val out = withContext(Dispatchers.IO) {
+                runCatching { if (isVideo) Media.publishVideo(context, file) else Media.publishImage(context, file) }.getOrNull()
+            }
+            if (out != null) saved(out, note) else { saving = false; say("COULDN'T SAVE") }
+        }
+    }
+
+    fun overwrite(file: File) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching { Media.overwrite(context, uri, file) }.isSuccess }
+            if (ok) saved(uri, "ORIGINAL REPLACED") else copy(file, "SAVED AS A COPY INSTEAD")
+        }
+    }
+
+    val askWrite = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        val f = pendingFile ?: return@rememberLauncherForActivityResult
+        pendingFile = null
+        if (res.resultCode == android.app.Activity.RESULT_OK) overwrite(f)
+        else { f.delete(); saving = false; say("ORIGINAL KEPT, NOTHING SAVED") }
+    }
+
+    fun deliver(file: File) {
+        if (!replace) {
+            copy(file, if (isVideo) "SAVED TO MOVIES / SONASIGHT" else "SAVED TO PICTURES / SONASIGHT")
+            return
+        }
+        scope.launch {
+            val err = withContext(Dispatchers.IO) {
+                try { Media.overwrite(context, uri, file); null } catch (e: Exception) { e }
+            }
+            when {
+                err == null -> saved(uri, "ORIGINAL REPLACED")
+                err is SecurityException -> {
+                    // the gallery's file needs your OK before it can be changed
+                    val sender = Media.writeRequest(context, uri, err)
+                    if (sender != null) {
+                        pendingFile = file
+                        askWrite.launch(IntentSenderRequest.Builder(sender).build())
+                    } else {
+                        copy(file, "GALLERY SAID NO, SAVED A COPY")
+                    }
+                }
+                else -> copy(file, "SAVED AS A COPY INSTEAD")
+            }
+        }
+    }
 
     fun pickStock(s: FilmStock) {
         stockId = s.id; sceneId = null
@@ -236,9 +319,9 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
         progress = 0
         if (!isVideo) {
             val l = look
-            val c = crop; val po = portrait; val pa = pan; val tilt = straight
+            val box = cropBox; val tilt = straight
             scope.launch {
-                val uriOut = withContext(Dispatchers.IO) {
+                val file = withContext(Dispatchers.IO) {
                     runCatching {
                         var full = Imaging.decode(context, uri, processor.maxTextureSize)
                         if (tilt != 0f) {
@@ -246,28 +329,26 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                             if (st !== full) full.recycle()
                             full = st
                         }
-                        full = Imaging.cropToAspect(full, c?.ratio, po, pa)
+                        if (!box.isFull) full = Imaging.cropNormalized(full, box.l, box.t, box.r, box.b)
                         full = Imaging.fitForGl(full, processor.maxTextureSize)
                         val out = processor.renderStill(full, l)
                         full.recycle()
                         val base = context.contentResolver.openInputStream(uri)?.use { ExifInterface(it) }
                         val info = ShotInfo(film = recipes.firstOrNull { it.id == recipeId }?.name ?: "${stock.name} ${stock.iso}", scene = scene?.name, focalMm = null, location = null)
-                        val file = Media.writeJpeg(context, out, info, base = base)
+                        val f = Media.writeJpeg(context, out, info, base = base)
                         out.recycle()
-                        Media.publishImage(context, file)
+                        f
                     }.getOrNull()
                 }
-                saving = false
-                if (uriOut != null) stampKey += 1
-                say(if (uriOut != null) "SAVED TO PICTURES / SONASIGHT" else "COULDN'T SAVE")
+                if (file != null) deliver(file) else { saving = false; say("COULDN'T SAVE") }
             }
         } else {
             exportVideo(
                 context = context, uri = uri, look = look, startMs = startMs,
                 endMs = if (endMs > 0) endMs else durationMs,
-                crop = if (crop != null) cropRect() else null,
+                crop = if (cropBox.isFull) null else android.graphics.RectF(cropBox.l, cropBox.t, cropBox.r, cropBox.b),
                 onProgress = { progress = it },
-                onDone = { ok -> saving = false; if (ok) stampKey += 1; say(if (ok) "SAVED TO MOVIES / SONASIGHT" else "COULDN'T SAVE") },
+                onDone = { file -> if (file != null) deliver(file) else { saving = false; say("COULDN'T SAVE") } },
             )
         }
     }
@@ -286,7 +367,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                 if (saving) {
                     BasicText(if (isVideo) "$progress%" else "…", style = Numeral.copy(color = Gold), modifier = Modifier.padding(horizontal = 12.dp))
                 } else {
-                    TextKey("SAVE COPY", active = true) { save() }
+                    TextKey(if (replace) "SAVE" else "SAVE COPY", active = true) { save() }
                 }
             }
 
@@ -301,17 +382,36 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                         Modifier.aspectRatio(ratio, matchHeightConstraintsFirst = maxWidth / maxHeight > ratio)
                             .pointerInput(tab) {
                                 if (tab == Tab.CROP) {
-                                    detectDragGestures { ch, drag ->
-                                        ch.consume()
-                                        val r = cropRect()
-                                        // pan along whichever axis the crop can move
-                                        pan = if (r.width() < 0.999f) {
-                                            val room = (1f - r.width()) * size.width / 2f
-                                            (pan + drag.x / room.coerceAtLeast(1f)).coerceIn(-1f, 1f)
-                                        } else {
-                                            val room = (1f - r.height()) * size.height / 2f
-                                            (pan + drag.y / room.coerceAtLeast(1f)).coerceIn(-1f, 1f)
-                                        }
+                                    // corners resize, edges resize when free, inside moves, two fingers zoom
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown()
+                                        val vw = size.width.toFloat()
+                                        val vh = size.height.toFloat()
+                                        var grab = CropMath.grab(cropBox, down.position, vw, vh, 30.dp.toPx(), ratio == Ratio.Free)
+                                        var pinched = false
+                                        do {
+                                            val ev = awaitPointerEvent()
+                                            val fingers = ev.changes.count { it.pressed }
+                                            if (fingers >= 2) {
+                                                pinched = true
+                                                val z = ev.calculateZoom()
+                                                val pan = ev.calculatePan()
+                                                var c = CropMath.zoom(cropBox, z, mediaW, mediaH, cropTarget())
+                                                c = CropMath.move(c, pan.x / vw, pan.y / vh)
+                                                cropBox = c
+                                            } else if (fingers == 1 && !pinched) {
+                                                val ch = ev.changes.first { it.pressed }
+                                                val d = ch.positionChange()
+                                                val p = Offset((ch.position.x / vw).coerceIn(0f, 1f), (ch.position.y / vh).coerceIn(0f, 1f))
+                                                cropBox = when (val g = grab) {
+                                                    is Grab.Corner -> CropMath.corner(cropBox, g.i, p, mediaW, mediaH, cropTarget())
+                                                    is Grab.Edge -> CropMath.edge(cropBox, g.i, p)
+                                                    Grab.Inside -> CropMath.move(cropBox, d.x / vw, d.y / vh)
+                                                }
+                                            }
+                                            ev.changes.forEach { if (it.positionChange() != Offset.Zero) it.consume() }
+                                        } while (ev.changes.any { it.pressed })
+                                        grab = Grab.Inside
                                     }
                                 } else {
                                     detectTapGestures(onPress = {
@@ -332,16 +432,35 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                             img?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }
                         }
                         Canvas(Modifier.fillMaxSize()) {
-                            val r = cropRect()
-                            val frame = Rect(r.left * size.width, r.top * size.height, r.right * size.width, r.bottom * size.height)
+                            val r = cropBox
+                            val frame = Rect(r.l * size.width, r.t * size.height, r.r * size.width, r.b * size.height)
                             val full = Rect(0f, 0f, size.width, size.height)
                             val hair = 1.dp.toPx()
-                            if (crop != null) {
+                            if (!r.isFull || tab == Tab.CROP) {
                                 val p = Path().apply { fillType = PathFillType.EvenOdd; addRect(full); addRect(frame) }
-                                drawPath(p, Ink.copy(alpha = 0.7f))
-                                drawRect(Mist.copy(alpha = 0.5f), frame.topLeft, frame.size, style = Stroke(hair))
+                                drawPath(p, Ink.copy(alpha = if (tab == Tab.CROP) 0.6f else 0.85f))
+                                drawRect(Mist.copy(alpha = 0.6f), frame.topLeft, frame.size, style = Stroke(hair))
                             }
                             if (tab == Tab.CROP) {
+                                // gold corner handles, and edge marks when the shape is free
+                                val arm = 18.dp.toPx()
+                                val th = 3.dp.toPx()
+                                val corners = listOf(
+                                    Triple(frame.topLeft, 1f, 1f), Triple(frame.topRight, -1f, 1f),
+                                    Triple(frame.bottomRight, -1f, -1f), Triple(frame.bottomLeft, 1f, -1f),
+                                )
+                                for ((o, sx, sy) in corners) {
+                                    drawLine(Gold, o, Offset(o.x + sx * arm, o.y), th)
+                                    drawLine(Gold, o, Offset(o.x, o.y + sy * arm), th)
+                                }
+                                if (ratio == Ratio.Free) {
+                                    val m = 10.dp.toPx()
+                                    val c = frame.center
+                                    drawLine(Gold, Offset(c.x - m, frame.top), Offset(c.x + m, frame.top), th)
+                                    drawLine(Gold, Offset(c.x - m, frame.bottom), Offset(c.x + m, frame.bottom), th)
+                                    drawLine(Gold, Offset(frame.left, c.y - m), Offset(frame.left, c.y + m), th)
+                                    drawLine(Gold, Offset(frame.right, c.y - m), Offset(frame.right, c.y + m), th)
+                                }
                                 val guide = Gold.copy(alpha = 0.8f)
                                 when (overlay) {
                                     Overlay.PHI -> phiGrid(frame, guide, hair)
@@ -418,15 +537,18 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                             Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            items(CROPS) { a ->
-                                TextKey(a?.label ?: "ORIGINAL", active = a == crop) { crop = a; pan = 0f }
+                            items(RATIOS) { a ->
+                                val label = if (a is Ratio.Fixed) {
+                                    val landscape = (mediaW >= mediaH) != turned
+                                    a.aspect.label(upright = !landscape)
+                                } else a.label()
+                                TextKey(label, active = a == ratio) { ratio = a }
                             }
                         }
                         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TextKey(
-                                when (portrait) { null -> "AUTO"; true -> "TALL"; false -> "WIDE" },
-                                active = portrait != null,
-                            ) { portrait = when (portrait) { null -> false; false -> true; true -> null }; pan = 0f }
+                            val canTurn = ratio is Ratio.Fixed && (ratio as Ratio.Fixed).aspect != Aspect.R1_1
+                            if (canTurn) TextKey("ROTATE FRAME", active = turned) { turned = !turned }
+                            TextKey("RESET") { cropBox = CropMath.fit(mediaW, mediaH, cropTarget()); if (ratio == Ratio.Free) cropBox = NRect.FULL }
                             Spacer(Modifier.weight(1f))
                             TextKey(overlay.label, active = overlay != Overlay.NONE) {
                                 overlay = Overlay.entries[(overlay.ordinal + 1) % Overlay.entries.size]
@@ -448,8 +570,7 @@ fun EditorScreen(uri: Uri, processor: FilmProcessor, prefs: Prefs, onClose: () -
                         }
                         Spacer(Modifier.weight(1f))
                         BasicText(
-                            if (crop == null) "pick a frame shape, then drag the picture to place it"
-                            else "drag the picture to place it in the frame",
+                            "drag a corner to resize, drag inside to move, pinch to zoom",
                             style = Body, modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
                         )
                     }
@@ -601,7 +722,7 @@ private fun TrimBar(
     }
 }
 
-/** Exports a trimmed, cropped, film-developed copy of a video into Movies/SonaSight. */
+/** Exports a trimmed, cropped, film-developed copy of a video to a temp file. */
 @OptIn(UnstableApi::class)
 private fun exportVideo(
     context: android.content.Context,
@@ -611,7 +732,7 @@ private fun exportVideo(
     endMs: Long,
     crop: android.graphics.RectF?,
     onProgress: (Int) -> Unit,
-    onDone: (Boolean) -> Unit,
+    onDone: (File?) -> Unit,
 ) {
     val out = File(context.cacheDir, Media.stamp() + ".mp4")
     val handler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -622,16 +743,13 @@ private fun exportVideo(
         .addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                 finished = true
-                Thread {
-                    val saved = runCatching { Media.publishVideo(context, out) }.getOrNull()
-                    handler.post { onDone(saved != null) }
-                }.start()
+                onDone(out)
             }
 
             override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                 finished = true
                 out.delete()
-                onDone(false)
+                onDone(null)
             }
         })
         .build()

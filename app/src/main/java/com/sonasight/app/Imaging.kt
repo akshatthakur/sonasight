@@ -43,6 +43,18 @@ object Imaging {
         return out
     }
 
+    /** Crops to a rectangle given in 0..1 coordinates. */
+    fun cropNormalized(src: Bitmap, l: Float, t: Float, r: Float, b: Float): Bitmap {
+        val x = (l * src.width).roundToInt().coerceIn(0, src.width - 1)
+        val y = (t * src.height).roundToInt().coerceIn(0, src.height - 1)
+        val w = ((r - l) * src.width).roundToInt().coerceIn(1, src.width - x)
+        val h = ((b - t) * src.height).roundToInt().coerceIn(1, src.height - y)
+        if (x == 0 && y == 0 && w == src.width && h == src.height) return src
+        val out = Bitmap.createBitmap(src, x, y, w, h)
+        if (out !== src) src.recycle()
+        return out
+    }
+
     /** Scales down to fit the GPU's texture limit and makes sure the pixels are ARGB_8888. */
     fun fitForGl(src: Bitmap, max: Int): Bitmap {
         var bmp = src

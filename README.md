@@ -136,15 +136,21 @@ photos are saved to `Pictures/SonaSight` and videos to `Movies/SonaSight`.
 ## editing
 
 open the editor from the square by the shutter, or from *••• > edit* for anything in your
-gallery. it works on photos and videos, and saving always makes a new copy, so the original
-stays as it was.
+gallery. it works on photos and videos, and saving makes a new copy, so the original stays as
+it was.
+
+SonaSight also shows up in *edit in* (or *edit with*) in your phone's gallery and in Google
+Photos. edits made that way replace the original, and Android may ask you to allow it the
+first time.
 
 - **FILM** picks a scene or any film, including MEISHO and your recipes. press and hold the
   picture to see the original.
 - **TUNE** has the same sliders as the camera, plus exposure.
-- **CROP** picks a frame shape, with the golden ratio guides on top. drag the picture to
-  place it. STRAIGHTEN rotates the picture. for photos taken with SonaSight, AUTO LEVEL
-  uses how tilted the phone was when you took it.
+- **CROP** drag a corner to resize the crop, drag inside it to move it, and pinch to zoom in
+  or out. FREE lets you pick any shape, and you can drag the edges too. ORIGINAL and the
+  ratios keep the shape locked, and ROTATE FRAME turns a locked shape sideways. the golden
+  ratio guides sit inside the crop. STRAIGHTEN rotates the picture, and for photos taken with
+  SonaSight, AUTO LEVEL uses how tilted the phone was when you took it.
 - **TRIM** (videos) sets where the clip starts and ends.
 
 ## code
@@ -162,6 +168,8 @@ app/src/main/java/com/sonasight/app/
   NightStack.kt      lines up and blends night frames
   ContactSheet.kt    lays photos out as a contact sheet
   ShootTile.kt       the quick settings tile
+  EditActivity.kt    the editor when it's opened from your gallery
+  ui/CropMath.kt     the crop: corners, edges, moving and zooming
   LocationTracker.kt where you are, when location is on
   Prefs.kt           remembers your settings
   ui/CameraScreen.kt the camera screen and its controls
