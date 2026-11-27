@@ -119,28 +119,6 @@ object Media {
         return uri
     }
 
-    /**
-     * Replaces the contents of [target] with [file] and deletes the temp file.
-     * Throws SecurityException when we aren't allowed to write there yet.
-     */
-    fun overwrite(context: Context, target: Uri, file: File) {
-        val r = context.contentResolver
-        val out = try { r.openOutputStream(target, "wt") } catch (e: IllegalArgumentException) { null }
-            ?: r.openOutputStream(target, "w")
-            ?: throw java.io.IOException("can't open $target for writing")
-        out.use { o -> file.inputStream().use { it.copyTo(o) } }
-        file.delete()
-    }
-
-    /** The system dialog that asks to let SonaSight change a file it doesn't own, if there is one. */
-    fun writeRequest(context: Context, target: Uri, e: SecurityException): android.content.IntentSender? {
-        if (Build.VERSION.SDK_INT >= 30 && target.authority == MediaStore.AUTHORITY) {
-            return runCatching { MediaStore.createWriteRequest(context.contentResolver, listOf(target)).intentSender }.getOrNull()
-        }
-        if (e is android.app.RecoverableSecurityException) return e.userAction.actionIntent.intentSender
-        return null
-    }
-
     // ---- roll mode: frames wait in private storage until the roll is developed ----
 
     fun rollDir(context: Context) = File(context.filesDir, "roll")

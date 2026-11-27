@@ -10,8 +10,8 @@ import com.sonasight.app.ui.EditorScreen
 
 /**
  * Opens when you pick SonaSight from "Edit in" in Gallery or Google Photos.
- * It goes straight to the editor without starting the camera, and saving replaces the
- * original, then hands the result back to the app that opened it.
+ * It goes straight to the editor without starting the camera. Saving makes a new copy in the
+ * SonaSight folder and hands it back to the app that opened it.
  */
 class EditActivity : ComponentActivity() {
 
@@ -27,14 +27,12 @@ class EditActivity : ComponentActivity() {
         val p = FilmProcessor()
         processor = p
         val prefs = Prefs(this)
-        val replace = intent.action == Intent.ACTION_EDIT
 
         setContent {
             EditorScreen(
                 uri = uri,
                 processor = p,
                 prefs = prefs,
-                replace = replace,
                 onSaved = { saved ->
                     setResult(RESULT_OK, Intent().setData(saved).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
                     finish()

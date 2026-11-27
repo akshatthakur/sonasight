@@ -140,8 +140,7 @@ gallery. it works on photos and videos, and saving makes a new copy, so the orig
 it was.
 
 SonaSight also shows up in *edit in* (or *edit with*) in your phone's gallery and in Google
-Photos. edits made that way replace the original, and Android may ask you to allow it the
-first time.
+Photos. edits made that way are saved as a new copy in the SonaSight folder too.
 
 - **FILM** picks a scene or any film, including MEISHO and your recipes. press and hold the
   picture to see the original.

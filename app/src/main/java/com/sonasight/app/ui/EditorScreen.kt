@@ -12,9 +12,6 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -121,7 +118,6 @@ fun EditorScreen(
     uri: Uri,
     processor: FilmProcessor,
     prefs: Prefs,
-    replace: Boolean = false,
     onSaved: ((Uri) -> Unit)? = null,
     onClose: () -> Unit,
 ) {
@@ -137,7 +133,6 @@ fun EditorScreen(
     var ratio by remember { mutableStateOf<Ratio>(Ratio.Free) }
     var turned by remember { mutableStateOf(false) }
     var cropBox by remember { mutableStateOf(NRect.FULL) }
-    var pendingFile by remember { mutableStateOf<File?>(null) }
     var overlay by remember { mutableStateOf(Overlay.PHI) }
     var turn by remember { mutableIntStateOf(0) }
     var tab by remember { mutableStateOf(Tab.FILM) }
@@ -257,60 +252,15 @@ fun EditorScreen(
         onSaved?.let { done -> scope.launch { delay(900); done(where) } }
     }
 
-    /** Puts a finished file where it belongs: over the original, or as a copy in the gallery. */
-    fun copy(file: File, note: String) {
+    /** Saves a finished file as a new copy in the SonaSight folder. The original is never touched. */
+    fun deliver(file: File) {
         scope.launch {
             val out = withContext(Dispatchers.IO) {
                 runCatching { if (isVideo) Media.publishVideo(context, file) else Media.publishImage(context, file) }.getOrNull()
             }
-            if (out != null) saved(out, note) else { saving = false; say("COULDN'T SAVE") }
+            if (out != null) saved(out, if (isVideo) "SAVED TO MOVIES / SONASIGHT" else "SAVED TO PICTURES / SONASIGHT")
+            else { saving = false; say("COULDN'T SAVE") }
         }
-    }
-
-    fun overwrite(file: File) {
-        scope.launch {
-            val ok = withContext(Dispatchers.IO) { runCatching { Media.overwrite(context, uri, file) }.isSuccess }
-            if (ok) saved(uri, "ORIGINAL REPLACED") else copy(file, "SAVED AS A COPY INSTEAD")
-        }
-    }
-
-    val askWrite = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        val f = pendingFile ?: return@rememberLauncherForActivityResult
-        pendingFile = null
-        if (res.resultCode == android.app.Activity.RESULT_OK) overwrite(f)
-        else { f.delete(); saving = false; say("ORIGINAL KEPT, NOTHING SAVED") }
-    }
-
-    fun deliver(file: File) {
-        if (!replace) {
-            copy(file, if (isVideo) "SAVED TO MOVIES / SONASIGHT" else "SAVED TO PICTURES / SONASIGHT")
-            return
-        }
-        scope.launch {
-            val err = withContext(Dispatchers.IO) {
-                try { Media.overwrite(context, uri, file); null } catch (e: Exception) { e }
-            }
-            when {
-                err == null -> saved(uri, "ORIGINAL REPLACED")
-                err is SecurityException -> {
-                    // the gallery's file needs your OK before it can be changed
-                    val sender = Media.writeRequest(context, uri, err)
-                    if (sender != null) {
-                        pendingFile = file
-                        askWrite.launch(IntentSenderRequest.Builder(sender).build())
-                    } else {
-                        copy(file, "GALLERY SAID NO, SAVED A COPY")
-                    }
-                }
-                else -> copy(file, "SAVED AS A COPY INSTEAD")
-            }
-        }
-    }
-
-    fun pickStock(s: FilmStock) {
-        stockId = s.id; sceneId = null
-        if (recipeId.isNotEmpty()) adjust = Adjust.NONE
-        recipeId = ""
     }
 
     fun save() {
@@ -367,7 +317,7 @@ fun EditorScreen(
                 if (saving) {
                     BasicText(if (isVideo) "$progress%" else "…", style = Numeral.copy(color = Gold), modifier = Modifier.padding(horizontal = 12.dp))
                 } else {
-                    TextKey(if (replace) "SAVE" else "SAVE COPY", active = true) { save() }
+                    TextKey("SAVE COPY", active = true) { save() }
                 }
             }
 
